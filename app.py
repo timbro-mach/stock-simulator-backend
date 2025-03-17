@@ -41,8 +41,8 @@ class Holding(db.Model):
 # Competition model (defines a group competition)
 class Competition(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    code = db.Column(db.String(16), unique=True, nullable=False)
-    name = db.Column(db.String(80), nullable=True)
+    code = db.Column(db.String(16), unique=True, nullable=False)  # Unique competition code
+    name = db.Column(db.String(80), nullable=True)  # Optional competition name
     created_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
@@ -51,7 +51,7 @@ class CompetitionMember(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     competition_id = db.Column(db.Integer, db.ForeignKey('competition.id'), nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    cash_balance = db.Column(db.Float, default=100000)
+    cash_balance = db.Column(db.Float, default=100000)  # Competition starting balance
     __table_args__ = (db.UniqueConstraint('competition_id', 'user_id', name='_competition_user_uc'),)
 
 # CompetitionHolding model stores trades made in a competition.
@@ -62,7 +62,7 @@ class CompetitionHolding(db.Model):
     quantity = db.Column(db.Integer, nullable=False)
     buy_price = db.Column(db.Float, nullable=False)
 
-# Create tables
+# Create tables (if necessary)
 with app.app_context():
     db.create_all()
 
@@ -95,12 +95,13 @@ def login():
         for m in memberships:
             comp = db.session.get(Competition, m.competition_id)
             if comp:
-                # For now, if no competition trades have occurred, total equals competition cash.
+                # If no competition trades, total equals competition cash.
                 competition_accounts.append({
                     'code': comp.code,
                     'name': comp.name,
                     'competition_cash': m.cash_balance,
-                    'total_value': m.cash_balance
+                    'total_value': m.cash_balance,
+                    'portfolio': []  # Backend should return portfolio details if trades exist.
                 })
         return jsonify({
             'message': 'Login successful',
@@ -124,27 +125,27 @@ def get_stock(symbol):
     except Exception as e:
         return jsonify({'error': f'Failed to fetch data: {str(e)}'}), 400
 
-# Global leaderboard (shows only users with a competition account)
-@app.route('/leaderboard', methods=['GET'])
-def leaderboard():
-    comp_members = CompetitionMember.query.all()
-    leaderboard_list = []
-    for member in comp_members:
-        user = db.session.get(User, member.user_id)
-        if not user:
-            continue
-        total = member.cash_balance
-        choldings = CompetitionHolding.query.filter_by(competition_member_id=member.id).all()
-        for h in choldings:
-            stock = yf.Ticker(h.symbol)
-            d = stock.history(period='1d')
-            if not d.empty:
-                price = float(d['Close'].iloc[-1])
-                total += price * h.quantity
-        leaderboard_list.append({'username': user.username, 'total_value': total})
-    leaderboard_list = sorted(leaderboard_list, key=lambda x: x['total_value'], reverse=True)
-    return jsonify(leaderboard_list)
+# New Global Leaderboard Endpoint (for global account)
+# Returns only the current user's global performance.
+@app.route('/global_leaderboard', methods=['GET'])
+def global_leaderboard():
+    username = request.args.get('username')
+    if not username:
+        return jsonify({'message': 'Username is required'}), 400
+    user = User.query.filter_by(username=username).first()
+    if not user:
+        return jsonify({'message': 'User not found'}), 404
+    holdings = Holding.query.filter_by(user_id=user.id).all()
+    total = user.cash_balance
+    for h in holdings:
+        stock = yf.Ticker(h.symbol)
+        d = stock.history(period='1d')
+        if not d.empty:
+            price = float(d['Close'].iloc[-1])
+            total += price * h.quantity
+    return jsonify([{'username': user.username, 'total_value': total}])
 
+# Global buy endpoint
 @app.route('/buy', methods=['POST'])
 def buy_stock():
     data = request.get_json()
@@ -172,6 +173,7 @@ def buy_stock():
     db.session.commit()
     return jsonify({'message': 'Buy successful', 'cash_balance': user.cash_balance})
 
+# Global sell endpoint
 @app.route('/sell', methods=['POST'])
 def sell_stock():
     data = request.get_json()
@@ -289,7 +291,7 @@ def stock_chart(symbol):
 # Competition Endpoints (Competition Trading)
 # --------------------
 
-# Create a competition (does NOT automatically add the creator)
+# Create a competition (does NOT add the creator automatically)
 @app.route('/competition/create', methods=['POST'])
 def create_competition():
     data = request.get_json()
