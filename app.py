@@ -140,26 +140,28 @@ def get_stock(symbol):
         return jsonify({'error': f'Failed to fetch data for symbol {symbol}: {str(e)}'}), 400
 
 
+# Fetch current stock price data
+@app.route('/stock/<symbol>', methods=['GET'])
+def get_stock(symbol):
+    try:
+        stock = yf.Ticker(symbol)
+        info = stock.info
+        if not info or 'regularMarketPrice' not in info:
+            return jsonify({'error': f'Invalid symbol or no market info available for {symbol}'}), 404
 
-# New Global Leaderboard Endpoint (for global account)
-# Returns only the current user's global performance.
-@app.route('/global_leaderboard', methods=['GET'])
-def global_leaderboard():
-    username = request.args.get('username')
-    if not username:
-        return jsonify({'message': 'Username is required'}), 400
-    user = User.query.filter_by(username=username).first()
-    if not user:
-        return jsonify({'message': 'User not found'}), 404
-    holdings = Holding.query.filter_by(user_id=user.id).all()
-    total = user.cash_balance
-    for h in holdings:
-        stock = yf.Ticker(h.symbol)
-        d = stock.history(period='1d')
-        if not d.empty:
-            price = float(d['Close'].iloc[-1])
-            total += price * h.quantity
-    return jsonify([{'username': user.username, 'total_value': total}])
+        data = stock.history(period='1d', interval='1d')
+        if data.empty:
+            return jsonify({'error': f'No historical data found for symbol {symbol}'}), 404
+
+        price = float(data['Close'].iloc[-1])
+        return jsonify({'symbol': symbol, 'price': price})
+    except Exception as e:
+        # You can check for a 429 error explicitly if needed.
+        error_str = str(e)
+        if '429' in error_str:
+            return jsonify({'error': f'Too many requests to the data provider for symbol {symbol}. Please try again later.'}), 429
+        return jsonify({'error': f'Failed to fetch data for symbol {symbol}: {error_str}'}), 400
+
 
 # Global buy endpoint
 @app.route('/buy', methods=['POST'])
