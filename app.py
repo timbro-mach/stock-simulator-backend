@@ -120,7 +120,7 @@ def login():
 def get_stock(symbol):
     try:
         stock = yf.Ticker(symbol)
-        data = stock.history(period='5d')
+        data = stock.history(period='1d')
         if data.empty:
             return jsonify({'error': f'No data found for symbol {symbol}'}), 404
         price = float(data['Close'].iloc[-1])
