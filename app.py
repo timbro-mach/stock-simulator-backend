@@ -7,7 +7,10 @@ import secrets
 from datetime import datetime
 
 app = Flask(__name__)
-CORS(app)
+from flask_cors import CORS
+
+CORS(app, resources={r"/*": {"origins": "https://stock-simulator-frontend.vercel.app"}})
+
 
 # Database setup
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///stock_simulator.db'
@@ -117,7 +120,7 @@ def login():
 def get_stock(symbol):
     try:
         stock = yf.Ticker(symbol)
-        data = stock.history(period='1d')
+        data = stock.history(period='5d')
         if data.empty:
             return jsonify({'error': f'No data found for symbol {symbol}'}), 404
         price = float(data['Close'].iloc[-1])
@@ -441,5 +444,8 @@ def competition_member():
 # --------------------
 # Run the app
 # --------------------
+import os
 if __name__ == '__main__':
-    app.run(debug=True)
+    port = int(os.environ.get('PORT', 10000))
+    app.run(debug=True, host='0.0.0.0', port=port)
+
