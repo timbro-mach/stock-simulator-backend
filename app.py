@@ -15,7 +15,7 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
 # Alpha Vantage API Key
-ALPHA_VANTAGE_API_KEY = "HPL92QXWH3DG7G01"
+ALPHA_VANTAGE_API_KEY = "2QZ58MHB8CG5PYYJ"
 
 # --------------------
 # Models
