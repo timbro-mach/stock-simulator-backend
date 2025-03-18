@@ -127,40 +127,12 @@ def get_stock(symbol):
         if not info or 'regularMarketPrice' not in info:
             return jsonify({'error': f'Invalid symbol or no market info available for {symbol}. Info: {info}'}), 404
 
-        # Fetch historical data with a clear period and interval.
-        data = stock.history(period='1d', interval='1d')
-        app.logger.info(f"Historical data for {symbol}: {data}")
-        if data.empty:
-            return jsonify({'error': f'No historical data found for symbol {symbol}'}), 404
-
-        price = float(data['Close'].iloc[-1])
+        # Use the real-time market price from info.
+        price = info['regularMarketPrice']
         return jsonify({'symbol': symbol, 'price': price})
     except Exception as e:
         app.logger.error(f"Error fetching data for {symbol}: {e}")
         return jsonify({'error': f'Failed to fetch data for symbol {symbol}: {str(e)}'}), 400
-
-
-# Fetch current stock price data
-@app.route('/stock/<symbol>', methods=['GET'])
-def get_stock(symbol):
-    try:
-        stock = yf.Ticker(symbol)
-        info = stock.info
-        if not info or 'regularMarketPrice' not in info:
-            return jsonify({'error': f'Invalid symbol or no market info available for {symbol}'}), 404
-
-        data = stock.history(period='1d', interval='1d')
-        if data.empty:
-            return jsonify({'error': f'No historical data found for symbol {symbol}'}), 404
-
-        price = float(data['Close'].iloc[-1])
-        return jsonify({'symbol': symbol, 'price': price})
-    except Exception as e:
-        # You can check for a 429 error explicitly if needed.
-        error_str = str(e)
-        if '429' in error_str:
-            return jsonify({'error': f'Too many requests to the data provider for symbol {symbol}. Please try again later.'}), 429
-        return jsonify({'error': f'Failed to fetch data for symbol {symbol}: {error_str}'}), 400
 
 
 # Global buy endpoint
