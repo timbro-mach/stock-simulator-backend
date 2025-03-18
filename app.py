@@ -120,20 +120,25 @@ def login():
 def get_stock(symbol):
     try:
         stock = yf.Ticker(symbol)
-        # Check if ticker info is available (this may raise an exception if the symbol is invalid)
+        
+        # Log ticker info to help diagnose if the ticker object is valid.
         info = stock.info
+        app.logger.info(f"Ticker info for {symbol}: {info}")
         if not info or 'regularMarketPrice' not in info:
-            return jsonify({'error': f'Invalid symbol or no market info available for {symbol}'}), 404
+            return jsonify({'error': f'Invalid symbol or no market info available for {symbol}. Info: {info}'}), 404
 
-        # Now get historical data
+        # Fetch historical data with a clear period and interval.
         data = stock.history(period='1d', interval='1d')
+        app.logger.info(f"Historical data for {symbol}: {data}")
         if data.empty:
             return jsonify({'error': f'No historical data found for symbol {symbol}'}), 404
 
         price = float(data['Close'].iloc[-1])
         return jsonify({'symbol': symbol, 'price': price})
     except Exception as e:
+        app.logger.error(f"Error fetching data for {symbol}: {e}")
         return jsonify({'error': f'Failed to fetch data for symbol {symbol}: {str(e)}'}), 400
+
 
 
 # New Global Leaderboard Endpoint (for global account)
