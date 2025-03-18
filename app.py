@@ -2,26 +2,25 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_sqlalchemy import SQLAlchemy
-import yfinance as yf
+import requests
 import secrets
 from datetime import datetime
 
 app = Flask(__name__)
-from flask_cors import CORS
-
 CORS(app, resources={r"/*": {"origins": "https://stock-simulator-frontend.vercel.app"}})
-
 
 # Database setup
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///stock_simulator.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
+# Alpha Vantage API Key
+ALPHA_VANTAGE_API_KEY = "HPL92QXWH3DG7G01"
+
 # --------------------
 # Models
 # --------------------
 
-# Global User model (paper trading account)
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
@@ -33,7 +32,6 @@ class User(db.Model):
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
 
-# Global Holding model (for global paper trading)
 class Holding(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
@@ -41,23 +39,20 @@ class Holding(db.Model):
     quantity = db.Column(db.Integer, nullable=False)
     buy_price = db.Column(db.Float, nullable=False)
 
-# Competition model (defines a group competition)
 class Competition(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    code = db.Column(db.String(16), unique=True, nullable=False)  # Unique competition code
-    name = db.Column(db.String(80), nullable=True)  # Optional competition name
+    code = db.Column(db.String(16), unique=True, nullable=False)
+    name = db.Column(db.String(80), nullable=True)
     created_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-# CompetitionMember model represents a competition account.
 class CompetitionMember(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     competition_id = db.Column(db.Integer, db.ForeignKey('competition.id'), nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    cash_balance = db.Column(db.Float, default=100000)  # Competition starting balance
+    cash_balance = db.Column(db.Float, default=100000)
     __table_args__ = (db.UniqueConstraint('competition_id', 'user_id', name='_competition_user_uc'),)
 
-# CompetitionHolding model stores trades made in a competition.
 class CompetitionHolding(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     competition_member_id = db.Column(db.Integer, db.ForeignKey('competition_member.id'), nullable=False)
@@ -65,9 +60,24 @@ class CompetitionHolding(db.Model):
     quantity = db.Column(db.Integer, nullable=False)
     buy_price = db.Column(db.Float, nullable=False)
 
-# Create tables (if necessary)
 with app.app_context():
     db.create_all()
+
+# --------------------
+# Helper Function: Fetch current price from Alpha Vantage
+# --------------------
+def get_current_price(symbol):
+    url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={symbol}&apikey={ALPHA_VANTAGE_API_KEY}"
+    response = requests.get(url)
+    if response.status_code != 200:
+        raise Exception(f"Alpha Vantage API error: {response.status_code}")
+    data = response.json()
+    if "Global Quote" not in data or not data["Global Quote"]:
+        raise Exception(f"No data found for symbol {symbol}")
+    global_quote = data["Global Quote"]
+    if "05. price" not in global_quote:
+        raise Exception(f"No price information available for symbol {symbol}")
+    return float(global_quote["05. price"])
 
 # --------------------
 # Endpoints for Global Trading
@@ -98,55 +108,69 @@ def login():
         for m in memberships:
             comp = db.session.get(Competition, m.competition_id)
             if comp:
-                # If no competition trades, total equals competition cash.
                 competition_accounts.append({
                     'code': comp.code,
                     'name': comp.name,
                     'competition_cash': m.cash_balance,
                     'total_value': m.cash_balance,
-                    'portfolio': []  # Backend should return portfolio details if trades exist.
+                    'portfolio': []  # To be populated if trades exist.
                 })
         return jsonify({
             'message': 'Login successful',
             'username': user.username,
             'cash_balance': user.cash_balance,
-            'global_account': { 'cash_balance': user.cash_balance },
+            'global_account': {'cash_balance': user.cash_balance},
             'competition_accounts': competition_accounts
         })
     else:
         return jsonify({'message': 'Invalid credentials'}), 401
 
+# New stock endpoint using Alpha Vantage for current price
 @app.route('/stock/<symbol>', methods=['GET'])
 def get_stock(symbol):
     try:
-        stock = yf.Ticker(symbol)
-        
-        # Log ticker info to help diagnose if the ticker object is valid.
-        info = stock.info
-        app.logger.info(f"Ticker info for {symbol}: {info}")
-        if not info or 'regularMarketPrice' not in info:
-            return jsonify({'error': f'Invalid symbol or no market info available for {symbol}. Info: {info}'}), 404
-
-        # Use the real-time market price from info.
-        price = info['regularMarketPrice']
+        # Log request for debugging
+        app.logger.info(f"Fetching current price for {symbol}")
+        price = get_current_price(symbol)
         return jsonify({'symbol': symbol, 'price': price})
     except Exception as e:
         app.logger.error(f"Error fetching data for {symbol}: {e}")
         return jsonify({'error': f'Failed to fetch data for symbol {symbol}: {str(e)}'}), 400
 
+# Stock chart endpoint using Alpha Vantage Daily Time Series
+@app.route('/stock_chart/<symbol>', methods=['GET'])
+def stock_chart(symbol):
+    try:
+        url = f"https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol={symbol}&apikey={ALPHA_VANTAGE_API_KEY}"
+        response = requests.get(url)
+        if response.status_code != 200:
+            return jsonify({'error': f"Alpha Vantage API error: {response.status_code}"}), 400
+        data = response.json()
+        if "Time Series (Daily)" not in data:
+            return jsonify({'error': f'No time series data found for symbol {symbol}'}), 404
+        time_series = data["Time Series (Daily)"]
+        chart_data = []
+        for date_str, day_data in time_series.items():
+            chart_data.append({
+                'date': date_str,
+                'close': float(day_data["4. close"])
+            })
+        chart_data.sort(key=lambda x: x['date'])
+        return jsonify(chart_data)
+    except Exception as e:
+        return jsonify({'error': f'Failed to fetch chart data for symbol {symbol}: {str(e)}'}), 400
 
-# Global buy endpoint
+# Global buy endpoint using Alpha Vantage
 @app.route('/buy', methods=['POST'])
 def buy_stock():
     data = request.get_json()
     username = data.get('username')
     symbol = data.get('symbol')
     quantity = int(data.get('quantity'))
-    stock = yf.Ticker(symbol)
-    data_stock = stock.history(period='1d')
-    if data_stock.empty:
-        return jsonify({'message': f'Invalid symbol: {symbol}'}), 400
-    price = float(data_stock['Close'].iloc[-1])
+    try:
+        price = get_current_price(symbol)
+    except Exception as e:
+        return jsonify({'message': f'Error fetching price for symbol {symbol}: {str(e)}'}), 400
     cost = quantity * price
     user = User.query.filter_by(username=username).first()
     if not user:
@@ -163,18 +187,17 @@ def buy_stock():
     db.session.commit()
     return jsonify({'message': 'Buy successful', 'cash_balance': user.cash_balance})
 
-# Global sell endpoint
+# Global sell endpoint using Alpha Vantage
 @app.route('/sell', methods=['POST'])
 def sell_stock():
     data = request.get_json()
     username = data.get('username')
     symbol = data.get('symbol')
     quantity = int(data.get('quantity'))
-    stock = yf.Ticker(symbol)
-    data_stock = stock.history(period='1d')
-    if data_stock.empty:
-        return jsonify({'message': f'Invalid symbol: {symbol}'}), 400
-    price = float(data_stock['Close'].iloc[-1])
+    try:
+        price = get_current_price(symbol)
+    except Exception as e:
+        return jsonify({'message': f'Error fetching price for symbol {symbol}: {str(e)}'}), 400
     proceeds = quantity * price
     user = User.query.filter_by(username=username).first()
     if not user:
@@ -189,7 +212,7 @@ def sell_stock():
     db.session.commit()
     return jsonify({'message': 'Sell successful', 'cash_balance': user.cash_balance})
 
-# Global user data endpoint (returns global portfolio and competition accounts)
+# Global user data endpoint (calculates portfolio values using current prices)
 @app.route('/user', methods=['GET'])
 def get_user():
     username = request.args.get('username')
@@ -199,26 +222,24 @@ def get_user():
     if not user:
         return jsonify({'message': 'User not found'}), 404
 
-    # Global account details
     holdings = Holding.query.filter_by(user_id=user.id).all()
     global_portfolio = []
     total_global = user.cash_balance
     for h in holdings:
-        stock = yf.Ticker(h.symbol)
-        d = stock.history(period='1d')
-        if not d.empty:
-            price = float(d['Close'].iloc[-1])
-            value = price * h.quantity
-            total_global += value
-            global_portfolio.append({
-                'symbol': h.symbol,
-                'quantity': h.quantity,
-                'current_price': price,
-                'total_value': value,
-                'buy_price': h.buy_price
-            })
+        try:
+            price = get_current_price(h.symbol)
+        except Exception as e:
+            price = 0
+        value = price * h.quantity
+        total_global += value
+        global_portfolio.append({
+            'symbol': h.symbol,
+            'quantity': h.quantity,
+            'current_price': price,
+            'total_value': value,
+            'buy_price': h.buy_price
+        })
     
-    # Competition accounts details
     memberships = CompetitionMember.query.filter_by(user_id=user.id).all()
     competition_accounts = []
     for m in memberships:
@@ -228,19 +249,19 @@ def get_user():
             comp_portfolio = []
             total_comp_holdings = 0
             for ch in comp_holdings:
-                stock = yf.Ticker(ch.symbol)
-                d = stock.history(period='1d')
-                if not d.empty:
-                    price = float(d['Close'].iloc[-1])
-                    value = price * ch.quantity
-                    total_comp_holdings += value
-                    comp_portfolio.append({
-                        'symbol': ch.symbol,
-                        'quantity': ch.quantity,
-                        'current_price': price,
-                        'total_value': value,
-                        'buy_price': ch.buy_price
-                    })
+                try:
+                    price = get_current_price(ch.symbol)
+                except Exception as e:
+                    price = 0
+                value = price * ch.quantity
+                total_comp_holdings += value
+                comp_portfolio.append({
+                    'symbol': ch.symbol,
+                    'quantity': ch.quantity,
+                    'current_price': price,
+                    'total_value': value,
+                    'buy_price': ch.buy_price
+                })
             total_comp_value = m.cash_balance + total_comp_holdings
             competition_accounts.append({
                 'code': comp.code,
@@ -260,28 +281,7 @@ def get_user():
         'competition_accounts': competition_accounts
     })
 
-@app.route('/stock_chart/<symbol>', methods=['GET'])
-def stock_chart(symbol):
-    try:
-        stock = yf.Ticker(symbol)
-        data = stock.history(period='1y')
-        if data.empty:
-            return jsonify([]), 404
-        chart_data = []
-        for date, row in data.iterrows():
-            chart_data.append({
-                'date': date.strftime('%Y-%m-%d'),
-                'close': float(row['Close'])
-            })
-        return jsonify(chart_data)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 400
-
-# --------------------
-# Competition Endpoints (Competition Trading)
-# --------------------
-
-# Create a competition (does NOT add the creator automatically)
+# Competition endpoints
 @app.route('/competition/create', methods=['POST'])
 def create_competition():
     data = request.get_json()
@@ -298,7 +298,6 @@ def create_competition():
     db.session.commit()
     return jsonify({'message': 'Competition created successfully', 'competition_code': code})
 
-# Join a competition (creates a new competition account for the user)
 @app.route('/competition/join', methods=['POST'])
 def join_competition():
     data = request.get_json()
@@ -318,7 +317,6 @@ def join_competition():
     db.session.commit()
     return jsonify({'message': 'Successfully joined competition'})
 
-# Competition buy endpoint
 @app.route('/competition/buy', methods=['POST'])
 def competition_buy():
     data = request.get_json()
@@ -335,11 +333,10 @@ def competition_buy():
     member = CompetitionMember.query.filter_by(competition_id=comp.id, user_id=user.id).first()
     if not member:
         return jsonify({'message': 'User is not a member of this competition'}), 404
-    stock = yf.Ticker(symbol)
-    data_stock = stock.history(period='1d')
-    if data_stock.empty:
-        return jsonify({'message': f'Invalid symbol: {symbol}'}), 400
-    price = float(data_stock['Close'].iloc[-1])
+    try:
+        price = get_current_price(symbol)
+    except Exception as e:
+        return jsonify({'message': f'Error fetching price for symbol {symbol}: {str(e)}'}), 400
     cost = price * quantity
     if member.cash_balance < cost:
         return jsonify({'message': 'Insufficient funds in competition account'}), 400
@@ -353,7 +350,6 @@ def competition_buy():
     db.session.commit()
     return jsonify({'message': 'Competition buy successful', 'competition_cash': member.cash_balance})
 
-# Competition sell endpoint
 @app.route('/competition/sell', methods=['POST'])
 def competition_sell():
     data = request.get_json()
@@ -373,11 +369,10 @@ def competition_sell():
     holding = CompetitionHolding.query.filter_by(competition_member_id=member.id, symbol=symbol).first()
     if not holding or holding.quantity < quantity:
         return jsonify({'message': 'Not enough shares to sell in competition account'}), 400
-    stock = yf.Ticker(symbol)
-    data_stock = stock.history(period='1d')
-    if data_stock.empty:
-        return jsonify({'message': f'Invalid symbol: {symbol}'}), 400
-    price = float(data_stock['Close'].iloc[-1])
+    try:
+        price = get_current_price(symbol)
+    except Exception as e:
+        return jsonify({'message': f'Error fetching price for symbol {symbol}: {str(e)}'}), 400
     proceeds = price * quantity
     holding.quantity -= quantity
     if holding.quantity == 0:
@@ -386,7 +381,6 @@ def competition_sell():
     db.session.commit()
     return jsonify({'message': 'Competition sell successful', 'competition_cash': member.cash_balance})
 
-# Competition leaderboard (unique to each competition)
 @app.route('/competition/<code>/leaderboard', methods=['GET'])
 def competition_leaderboard(code):
     comp = Competition.query.filter_by(code=code).first()
@@ -398,17 +392,16 @@ def competition_leaderboard(code):
         total = m.cash_balance
         choldings = CompetitionHolding.query.filter_by(competition_member_id=m.id).all()
         for h in choldings:
-            stock = yf.Ticker(h.symbol)
-            d = stock.history(period='1d')
-            if not d.empty:
-                price = float(d['Close'].iloc[-1])
-                total += price * h.quantity
+            try:
+                price = get_current_price(h.symbol)
+            except Exception as e:
+                price = 0
+            total += price * h.quantity
         user = db.session.get(User, m.user_id)
         leaderboard.append({'username': user.username, 'total_value': total})
     leaderboard_sorted = sorted(leaderboard, key=lambda x: x['total_value'], reverse=True)
     return jsonify(leaderboard_sorted)
 
-# Get competitions that a user is a member of
 @app.route('/competition/member', methods=['GET'])
 def competition_member():
     username = request.args.get('username')
@@ -435,4 +428,3 @@ import os
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
     app.run(debug=True, host='0.0.0.0', port=port)
-
