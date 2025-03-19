@@ -1,771 +1,743 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-from werkzeug.security import generate_password_hash, check_password_hash
-from flask_sqlalchemy import SQLAlchemy
-import requests
-import secrets
-from datetime import datetime
-import os
+import React, { useState, useEffect } from 'react';
+import axios from 'axios';
+import Leaderboard from '../components/Leaderboard'; // Combined Leaderboard component
+import Competition from './Competition';
+import { Line } from 'react-chartjs-2';
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend,
+} from 'chart.js';
 
-app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "https://stock-simulator-frontend.vercel.app"}})
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
 
-# Database setup
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///stock_simulator.db'
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-db = SQLAlchemy(app)
+const Dashboard = () => {
+  // Authentication & global state
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
 
-# Alpha Vantage API Key
-ALPHA_VANTAGE_API_KEY = "2QZ58MHB8CG5PYYJ"
+  // Global account info
+  const [globalAccount, setGlobalAccount] = useState({ cash_balance: 0, portfolio: [], total_value: 0 });
+  // Individual competition accounts (from CompetitionMember)
+  const [competitionAccounts, setCompetitionAccounts] = useState([]);
+  // Team competition accounts (from CompetitionTeam)
+  const [teamCompetitionAccounts, setTeamCompetitionAccounts] = useState([]);
+  // Global team accounts (for creating/joining teams)
+  const [teams, setTeams] = useState([]);
 
-# --------------------
-# Models
-# --------------------
-class User(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(80), unique=True, nullable=False)
-    password_hash = db.Column(db.String(128), nullable=False)
-    cash_balance = db.Column(db.Float, default=100000)
+  // Selected account object:
+  // For global: { type: 'global' }
+  // For individual competition: { type: 'competition', id: <competition code> }
+  // For team competition: { type: 'team', team_id: <team_id>, competition_code: <competition code> }
+  const [selectedAccount, setSelectedAccount] = useState({ type: 'global' });
 
-    def set_password(self, password):
-        self.password_hash = generate_password_hash(password)
-    def check_password(self, password):
-        return check_password_hash(self.password_hash, password)
+  // Trading and chart state
+  const [stockSymbol, setStockSymbol] = useState('');
+  const [stockPrice, setStockPrice] = useState(null);
+  const [tradeQuantity, setTradeQuantity] = useState(0);
+  const [tradeMessage, setTradeMessage] = useState('');
+  const [chartData, setChartData] = useState(null);
 
-class Holding(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    symbol = db.Column(db.String(10), nullable=False)
-    quantity = db.Column(db.Integer, nullable=False)
-    buy_price = db.Column(db.Float, nullable=False)
+  // Teams (for global team creation/join)
+  const [teamName, setTeamName] = useState('');
+  const [joinTeamCode, setJoinTeamCode] = useState('');
+  const [teamMessage, setTeamMessage] = useState('');
 
-class Competition(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    code = db.Column(db.String(16), unique=True, nullable=False)
-    name = db.Column(db.String(80), nullable=True)
-    created_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+  // Base URL for API calls
+  const BASE_URL = 'https://stock-simulator-backend.onrender.com';
 
-class CompetitionMember(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    competition_id = db.Column(db.Integer, db.ForeignKey('competition.id'), nullable=False)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    cash_balance = db.Column(db.Float, default=100000)
-    __table_args__ = (db.UniqueConstraint('competition_id', 'user_id', name='_competition_user_uc'),)
+  // Fetch user data from /user endpoint
+  const fetchUserData = async () => {
+    try {
+      const response = await axios.get(`${BASE_URL}/user`, { params: { username } });
+      setGlobalAccount(response.data.global_account || { cash_balance: 0, portfolio: [], total_value: 0 });
+      setCompetitionAccounts(response.data.competition_accounts || []);
+      setTeamCompetitionAccounts(response.data.team_competitions || []);
+      // Also update global team accounts (from login endpoint) if available:
+      setTeams(response.data.teams || []);
+    } catch (error) {
+      if (error.response && error.response.status === 404) {
+        console.error('User not found. Please register.');
+        localStorage.removeItem('username');
+        setIsLoggedIn(false);
+      } else {
+        console.error('Failed to load user data:', error);
+      }
+    }
+  };
 
-class CompetitionHolding(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    competition_member_id = db.Column(db.Integer, db.ForeignKey('competition_member.id'), nullable=False)
-    symbol = db.Column(db.String(10), nullable=False)
-    quantity = db.Column(db.Integer, nullable=False)
-    buy_price = db.Column(db.Float, nullable=False)
+  // On mount, load username from localStorage
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const storedUsername = localStorage.getItem('username');
+      if (storedUsername) {
+        setUsername(storedUsername);
+        setIsLoggedIn(true);
+      }
+    }
+  }, []);
 
-# --------------------
-# New Models for Teams
-# --------------------
-class Team(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(80), nullable=False)
-    created_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    cash_balance = db.Column(db.Float, default=100000)  # Global team account cash
+  // Fetch user data after login
+  useEffect(() => {
+    if (isLoggedIn && username) {
+      fetchUserData();
+    }
+  }, [isLoggedIn, username]);
 
-class TeamMember(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    team_id = db.Column(db.Integer, db.ForeignKey('team.id'), nullable=False)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    __table_args__ = (db.UniqueConstraint('team_id', 'user_id', name='_team_user_uc'),)
+  const handleLogin = async (event) => {
+    event.preventDefault();
+    const loginData = { username, password };
+    try {
+      const response = await axios.post(`${BASE_URL}/login`, loginData);
+      if (response.data.username) {
+        localStorage.setItem('username', username);
+        setIsLoggedIn(true);
+        fetchUserData();
+      }
+    } catch (error) {
+      const errMsg = error.response?.data?.message || 'Login failed';
+      alert(errMsg);
+      console.error('Failed to log in:', error);
+    }
+  };
 
-class TeamHolding(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    team_id = db.Column(db.Integer, db.ForeignKey('team.id'), nullable=False)
-    symbol = db.Column(db.String(10), nullable=False)
-    quantity = db.Column(db.Integer, nullable=False)
-    buy_price = db.Column(db.Float, nullable=False)
+  const handleRegister = async (event) => {
+    event.preventDefault();
+    const registerData = { username, password };
+    try {
+      const response = await axios.post(`${BASE_URL}/register`, registerData);
+      alert(response.data.message);
+      setIsRegistering(false);
+    } catch (error) {
+      console.error('Failed to register:', error);
+      alert('Failed to register.');
+    }
+  };
 
-# Model for teams joining competitions
-class CompetitionTeam(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    competition_id = db.Column(db.Integer, db.ForeignKey('competition.id'), nullable=False)
-    team_id = db.Column(db.Integer, db.ForeignKey('team.id'), nullable=False)
-    cash_balance = db.Column(db.Float, default=100000)
-    __table_args__ = (db.UniqueConstraint('competition_id', 'team_id', name='_competition_team_uc'),)
+  const handleLogout = async () => {
+    try {
+      await axios.post(`${BASE_URL}/logout`);
+    } catch (error) {
+      console.error('Logout endpoint not available, proceeding with client-side logout.');
+    } finally {
+      localStorage.removeItem('username');
+      setUsername('');
+      setIsLoggedIn(false);
+      setGlobalAccount({ cash_balance: 0, portfolio: [], total_value: 0 });
+      setCompetitionAccounts([]);
+      setTeamCompetitionAccounts([]);
+      setTeams([]);
+      setSelectedAccount({ type: 'global' });
+    }
+  };
 
-class CompetitionTeamHolding(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    competition_team_id = db.Column(db.Integer, db.ForeignKey('competition_team.id'), nullable=False)
-    symbol = db.Column(db.String(10), nullable=False)
-    quantity = db.Column(db.Integer, nullable=False)
-    buy_price = db.Column(db.Float, nullable=False)
+  const getStockPrice = async () => {
+    if (!stockSymbol) {
+      setTradeMessage('Please enter a stock symbol.');
+      return;
+    }
+    try {
+      const response = await axios.get(`${BASE_URL}/stock/${stockSymbol}`);
+      if (response.data.price) {
+        setStockPrice(response.data.price);
+        setTradeMessage(`Current price for ${stockSymbol.toUpperCase()} is $${response.data.price.toFixed(2)}`);
+      } else {
+        setTradeMessage('Price not found.');
+      }
+      const chartResponse = await axios.get(`${BASE_URL}/stock_chart/${stockSymbol}`);
+      if (chartResponse.data && chartResponse.data.length > 0) {
+        const labels = chartResponse.data.map(point => point.date);
+        const dataPoints = chartResponse.data.map(point => point.close);
+        setChartData({
+          labels: labels,
+          datasets: [
+            {
+              label: `${stockSymbol.toUpperCase()} Price`,
+              data: dataPoints,
+              fill: false,
+              borderColor: 'rgba(75,192,192,1)',
+              tension: 0.1,
+            },
+          ],
+        });
+      } else {
+        setChartData(null);
+      }
+    } catch (error) {
+      console.error('Error fetching stock data:', error);
+      setTradeMessage('Error fetching stock data.');
+    }
+  };
 
-with app.app_context():
-    db.create_all()
+  // Global trading functions
+  const buyStockGlobal = async () => {
+    if (!stockSymbol || tradeQuantity <= 0) {
+      setTradeMessage('Please enter a valid stock symbol and quantity.');
+      return;
+    }
+    try {
+      const buyData = { username, symbol: stockSymbol, quantity: tradeQuantity };
+      const response = await axios.post(`${BASE_URL}/buy`, buyData);
+      if (response.data.message) {
+        setTradeMessage(response.data.message);
+        fetchUserData();
+      }
+    } catch (error) {
+      console.error('Error buying stock:', error);
+      setTradeMessage('Error buying stock.');
+    }
+  };
 
-# --------------------
-# Helper Function: Fetch current price from Alpha Vantage
-# --------------------
-def get_current_price(symbol):
-    url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={symbol}&apikey={ALPHA_VANTAGE_API_KEY}"
-    response = requests.get(url)
-    if response.status_code != 200:
-        raise Exception(f"Alpha Vantage API error: {response.status_code}")
-    data = response.json()
-    if "Global Quote" not in data or not data["Global Quote"]:
-        raise Exception(f"No data found for symbol {symbol}")
-    global_quote = data["Global Quote"]
-    if "05. price" not in global_quote:
-        raise Exception(f"No price information available for symbol {symbol}")
-    return float(global_quote["05. price"])
+  const sellStockGlobal = async () => {
+    if (!stockSymbol || tradeQuantity <= 0) {
+      setTradeMessage('Please enter a valid stock symbol and quantity.');
+      return;
+    }
+    try {
+      const sellData = { username, symbol: stockSymbol, quantity: tradeQuantity };
+      const response = await axios.post(`${BASE_URL}/sell`, sellData);
+      if (response.data.message) {
+        setTradeMessage(response.data.message);
+        fetchUserData();
+      }
+    } catch (error) {
+      console.error('Error selling stock:', error);
+      setTradeMessage('Error selling stock.');
+    }
+  };
 
-# --------------------
-# Endpoints for Registration and Login
-# --------------------
-@app.route('/register', methods=['POST'])
-def register():
-    data = request.get_json()
-    username = data.get('username')
-    password = data.get('password')
-    if User.query.filter_by(username=username).first():
-        return jsonify({'message': 'User already exists'}), 400
-    new_user = User(username=username)
-    new_user.set_password(password)
-    db.session.add(new_user)
-    db.session.commit()
-    return jsonify({'message': 'User created successfully'})
+  // Competition trading functions (individual)
+  const buyStockCompetition = async () => {
+    if (!stockSymbol || tradeQuantity <= 0) {
+      setTradeMessage('Please enter a valid stock symbol and quantity.');
+      return;
+    }
+    try {
+      const buyData = { username, competition_code: selectedAccount.id, symbol: stockSymbol, quantity: tradeQuantity };
+      const response = await axios.post(`${BASE_URL}/competition/buy`, buyData);
+      if (response.data.message) {
+        setTradeMessage(response.data.message);
+        fetchUserData();
+      }
+    } catch (error) {
+      console.error('Error buying competition stock:', error);
+      setTradeMessage('Error buying competition stock.');
+    }
+  };
 
-@app.route('/login', methods=['POST'])
-def login():
-    data = request.get_json()
-    username = data.get('username')
-    password = data.get('password')
-    user = User.query.filter_by(username=username).first()
-    if user and user.check_password(password):
-        memberships = CompetitionMember.query.filter_by(user_id=user.id).all()
-        competition_accounts = []
-        for m in memberships:
-            comp = db.session.get(Competition, m.competition_id)
-            if comp:
-                competition_accounts.append({
-                    'code': comp.code,
-                    'name': comp.name,
-                    'competition_cash': m.cash_balance,
-                    'total_value': m.cash_balance,
-                    'portfolio': []  # To be populated if trades exist.
-                })
-        # Also retrieve teams that the user is a member of (global team accounts)
-        team_memberships = TeamMember.query.filter_by(user_id=user.id).all()
-        teams = []
-        for tm in team_memberships:
-            team = db.session.get(Team, tm.team_id)
-            if team:
-                teams.append({
-                    'team_id': team.id,
-                    'team_name': team.name,
-                    'team_cash': team.cash_balance
-                })
-        return jsonify({
-            'message': 'Login successful',
-            'username': user.username,
-            'cash_balance': user.cash_balance,
-            'global_account': {'cash_balance': user.cash_balance},
-            'competition_accounts': competition_accounts,
-            'teams': teams
-        })
-    else:
-        return jsonify({'message': 'Invalid credentials'}), 401
+  const sellStockCompetition = async () => {
+    if (!stockSymbol || tradeQuantity <= 0) {
+      setTradeMessage('Please enter a valid stock symbol and quantity.');
+      return;
+    }
+    try {
+      const sellData = { username, competition_code: selectedAccount.id, symbol: stockSymbol, quantity: tradeQuantity };
+      const response = await axios.post(`${BASE_URL}/competition/sell`, sellData);
+      if (response.data.message) {
+        setTradeMessage(response.data.message);
+        fetchUserData();
+      }
+    } catch (error) {
+      console.error('Error selling competition stock:', error);
+      setTradeMessage('Error selling competition stock.');
+    }
+  };
 
-# --------------------
-# Endpoint for Global User Data (including team competition accounts)
-# --------------------
-@app.route('/user', methods=['GET'])
-def get_user():
-    username = request.args.get('username')
-    if not username:
-        return jsonify({'message': 'Username is required'}), 400
-    user = User.query.filter_by(username=username).first()
-    if not user:
-        return jsonify({'message': 'User not found'}), 404
+  // Team trading functions (for team competition accounts)
+  const buyStockTeam = async () => {
+    if (!stockSymbol || tradeQuantity <= 0) {
+      setTradeMessage('Please enter a valid stock symbol and quantity.');
+      return;
+    }
+    try {
+      const buyData = { username, team_id: selectedAccount.team_id, competition_code: selectedAccount.competition_code, symbol: stockSymbol, quantity: tradeQuantity };
+      const response = await axios.post(`${BASE_URL}/competition/team/buy`, buyData);
+      if (response.data.message) {
+        setTradeMessage(response.data.message);
+        fetchUserData();
+      }
+    } catch (error) {
+      console.error('Error buying team stock:', error);
+      setTradeMessage('Error buying team stock.');
+    }
+  };
 
-    # Global account portfolio and value
-    holdings = Holding.query.filter_by(user_id=user.id).all()
-    global_portfolio = []
-    total_global = user.cash_balance
-    for h in holdings:
-        try:
-            price = get_current_price(h.symbol)
-        except Exception:
-            price = 0
-        value = price * h.quantity
-        total_global += value
-        global_portfolio.append({
-            'symbol': h.symbol,
-            'quantity': h.quantity,
-            'current_price': price,
-            'total_value': value,
-            'buy_price': h.buy_price
-        })
+  const sellStockTeam = async () => {
+    if (!stockSymbol || tradeQuantity <= 0) {
+      setTradeMessage('Please enter a valid stock symbol and quantity.');
+      return;
+    }
+    try {
+      const sellData = { username, team_id: selectedAccount.team_id, competition_code: selectedAccount.competition_code, symbol: stockSymbol, quantity: tradeQuantity };
+      const response = await axios.post(`${BASE_URL}/competition/team/sell`, sellData);
+      if (response.data.message) {
+        setTradeMessage(response.data.message);
+        fetchUserData();
+      }
+    } catch (error) {
+      console.error('Error selling team stock:', error);
+      setTradeMessage('Error selling team stock.');
+    }
+  };
 
-    # Individual competition accounts
-    competition_accounts = []
-    memberships = CompetitionMember.query.filter_by(user_id=user.id).all()
-    for m in memberships:
-        comp = db.session.get(Competition, m.competition_id)
-        if comp:
-            comp_holdings = CompetitionHolding.query.filter_by(competition_member_id=m.id).all()
-            comp_portfolio = []
-            total_comp_holdings = 0
-            for ch in comp_holdings:
-                try:
-                    price = get_current_price(ch.symbol)
-                except Exception:
-                    price = 0
-                value = price * ch.quantity
-                total_comp_holdings += value
-                comp_portfolio.append({
-                    'symbol': ch.symbol,
-                    'quantity': ch.quantity,
-                    'current_price': price,
-                    'total_value': value,
-                    'buy_price': ch.buy_price
-                })
-            total_comp_value = m.cash_balance + total_comp_holdings
-            competition_accounts.append({
-                'code': comp.code,
-                'name': comp.name,
-                'competition_cash': m.cash_balance,
-                'portfolio': comp_portfolio,
-                'total_value': total_comp_value
-            })
+  // Teams creation and joining functions (global teams)
+  const createTeam = async () => {
+    if (!teamName) {
+      setTeamMessage('Please enter a team name.');
+      return;
+    }
+    try {
+      const response = await axios.post(`${BASE_URL}/team/create`, { username, team_name: teamName });
+      setTeamMessage(`Team created successfully! Your Team Code is ${response.data.team_code}`);
+      setTeamName('');
+      fetchUserData();
+    } catch (error) {
+      console.error('Error creating team:', error);
+      setTeamMessage('Error creating team.');
+    }
+  };
 
-    # Team competition accounts: get all teams the user belongs to and then find CompetitionTeam entries.
-    team_memberships = TeamMember.query.filter_by(user_id=user.id).all()
-    team_competitions = []
-    for tm in team_memberships:
-        ct_entries = CompetitionTeam.query.filter_by(team_id=tm.team_id).all()
-        for ct in ct_entries:
-            comp = db.session.get(Competition, ct.competition_id)
-            if comp:
-                ct_holdings = CompetitionTeamHolding.query.filter_by(competition_team_id=ct.id).all()
-                comp_team_portfolio = []
-                total_holdings = 0
-                for cht in ct_holdings:
-                    try:
-                        price = get_current_price(cht.symbol)
-                    except Exception:
-                        price = 0
-                    value = price * cht.quantity
-                    total_holdings += value
-                    comp_team_portfolio.append({
-                        'symbol': cht.symbol,
-                        'quantity': cht.quantity,
-                        'current_price': price,
-                        'total_value': value,
-                        'buy_price': cht.buy_price
-                    })
-                total_value = ct.cash_balance + total_holdings
-                team_competitions.append({
-                    'code': comp.code,
-                    'name': comp.name,
-                    'competition_cash': ct.cash_balance,
-                    'portfolio': comp_team_portfolio,
-                    'total_value': total_value,
-                    'team_id': ct.team_id
-                })
+  const joinTeam = async () => {
+    if (!joinTeamCode) {
+      setTeamMessage('Please enter a team code.');
+      return;
+    }
+    try {
+      const response = await axios.post(`${BASE_URL}/team/join`, { username, team_code: joinTeamCode });
+      setTeamMessage(response.data.message);
+      setJoinTeamCode('');
+      fetchUserData();
+    } catch (error) {
+      console.error('Error joining team:', error);
+      setTeamMessage('Error joining team.');
+    }
+  };
 
-    return jsonify({
-        'username': user.username,
-        'global_account': {
-            'cash_balance': user.cash_balance,
-            'portfolio': global_portfolio,
-            'total_value': total_global
-        },
-        'competition_accounts': competition_accounts,
-        'team_competitions': team_competitions
-    })
+  // Render account details based on selected account
+  const renderAccountDetails = () => {
+    if (selectedAccount.type === 'global') {
+      return (
+        <div className="account-box">
+          <h2>Global Account for {username}</h2>
+          <p>Cash Balance: ${ (globalAccount.cash_balance ?? 0).toFixed(2) }</p>
+          <p>Total Account Value: ${ (globalAccount.total_value ?? 0).toFixed(2) }</p>
+        </div>
+      );
+    } else if (selectedAccount.type === 'competition') {
+      const compAcc = competitionAccounts.find(acc => acc.code === selectedAccount.id);
+      if (!compAcc) return null;
+      return (
+        <div className="account-box">
+          <h2>Competition Account (Individual) for {username}</h2>
+          <p>Competition: {compAcc.name} (Code: {compAcc.code})</p>
+          <p>Cash Balance: ${ (compAcc.competition_cash ?? 0).toFixed(2) }</p>
+          <p>Total Account Value: ${ (compAcc.total_value ?? 0).toFixed(2) }</p>
+        </div>
+      );
+    } else if (selectedAccount.type === 'team') {
+      // For team competition account, selectedAccount contains team_id and competition_code.
+      const teamAcc = teamCompetitionAccounts.find(acc => acc.team_id === selectedAccount.team_id && acc.code === selectedAccount.competition_code);
+      if (!teamAcc) return null;
+      return (
+        <div className="account-box">
+          <h2>Competition Account (Team) - {teamAcc.name}</h2>
+          <p>Cash Balance: ${ (teamAcc.competition_cash ?? 0).toFixed(2) }</p>
+          <p>Total Account Value: ${ (teamAcc.total_value ?? 0).toFixed(2) }</p>
+        </div>
+      );
+    }
+  };
 
-# --------------------
-# Stock Endpoints
-# --------------------
-@app.route('/stock/<symbol>', methods=['GET'])
-def get_stock(symbol):
-    try:
-        app.logger.info(f"Fetching current price for {symbol}")
-        price = get_current_price(symbol)
-        return jsonify({'symbol': symbol, 'price': price})
-    except Exception as e:
-        app.logger.error(f"Error fetching data for {symbol}: {e}")
-        return jsonify({'error': f'Failed to fetch data for symbol {symbol}: {str(e)}'}), 400
+  // Render portfolio details
+  const renderPortfolioBox = () => {
+    if (selectedAccount.type === 'global') {
+      return (
+        <div className="portfolio-box">
+          <h3>Your Global Portfolio</h3>
+          {globalAccount.portfolio && globalAccount.portfolio.length > 0 ? (
+            <table>
+              <thead>
+                <tr>
+                  <th>Stock</th>
+                  <th>Quantity</th>
+                  <th>Current Price</th>
+                  <th>Total Value</th>
+                  <th>P&L</th>
+                </tr>
+              </thead>
+              <tbody>
+                {globalAccount.portfolio.map((holding, index) => {
+                  const pnl = holding.buy_price
+                    ? (holding.current_price - holding.buy_price) * holding.quantity
+                    : 0;
+                  return (
+                    <tr key={index}>
+                      <td>{holding.symbol}</td>
+                      <td>{holding.quantity}</td>
+                      <td>${holding.current_price.toFixed(2)}</td>
+                      <td>${holding.total_value.toFixed(2)}</td>
+                      <td style={{ color: pnl >= 0 ? 'green' : 'red' }}>
+                        ${pnl.toFixed(2)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          ) : (
+            <p>No holdings in your global portfolio.</p>
+          )}
+        </div>
+      );
+    } else if (selectedAccount.type === 'competition') {
+      const compAcc = competitionAccounts.find(acc => acc.code === selectedAccount.id);
+      return (
+        <div className="portfolio-box">
+          <h3>Your Competition Portfolio (Individual)</h3>
+          {compAcc && compAcc.portfolio && compAcc.portfolio.length > 0 ? (
+            <table>
+              <thead>
+                <tr>
+                  <th>Stock</th>
+                  <th>Quantity</th>
+                  <th>Current Price</th>
+                  <th>Total Value</th>
+                  <th>P&L</th>
+                </tr>
+              </thead>
+              <tbody>
+                {compAcc.portfolio.map((holding, index) => {
+                  const pnl = holding.buy_price
+                    ? (holding.current_price - holding.buy_price) * holding.quantity
+                    : 0;
+                  return (
+                    <tr key={index}>
+                      <td>{holding.symbol}</td>
+                      <td>{holding.quantity}</td>
+                      <td>${holding.current_price.toFixed(2)}</td>
+                      <td>${holding.total_value.toFixed(2)}</td>
+                      <td style={{ color: pnl >= 0 ? 'green' : 'red' }}>
+                        ${pnl.toFixed(2)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          ) : (
+            <p>No holdings in your individual competition portfolio.</p>
+          )}
+        </div>
+      );
+    } else if (selectedAccount.type === 'team') {
+      const teamAcc = teamCompetitionAccounts.find(acc => acc.team_id === selectedAccount.team_id && acc.code === selectedAccount.competition_code);
+      return (
+        <div className="portfolio-box">
+          <h3>Your Competition Portfolio (Team)</h3>
+          {teamAcc && teamAcc.portfolio && teamAcc.portfolio.length > 0 ? (
+            <table>
+              <thead>
+                <tr>
+                  <th>Stock</th>
+                  <th>Quantity</th>
+                  <th>Current Price</th>
+                  <th>Total Value</th>
+                  <th>P&L</th>
+                </tr>
+              </thead>
+              <tbody>
+                {teamAcc.portfolio.map((holding, index) => {
+                  const pnl = holding.buy_price
+                    ? (holding.current_price - holding.buy_price) * holding.quantity
+                    : 0;
+                  return (
+                    <tr key={index}>
+                      <td>{holding.symbol}</td>
+                      <td>{holding.quantity}</td>
+                      <td>${holding.current_price.toFixed(2)}</td>
+                      <td>${holding.total_value.toFixed(2)}</td>
+                      <td style={{ color: pnl >= 0 ? 'green' : 'red' }}>
+                        ${pnl.toFixed(2)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          ) : (
+            <p>No holdings in your team competition portfolio.</p>
+          )}
+        </div>
+      );
+    }
+  };
 
-@app.route('/stock_chart/<symbol>', methods=['GET'])
-def stock_chart(symbol):
-    try:
-        url = f"https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol={symbol}&apikey={ALPHA_VANTAGE_API_KEY}"
-        response = requests.get(url)
-        if response.status_code != 200:
-            return jsonify({'error': f"Alpha Vantage API error: {response.status_code}"}), 400
-        data = response.json()
-        if "Time Series (Daily)" not in data:
-            return jsonify({'error': f'No time series data found for symbol {symbol}'}), 404
-        time_series = data["Time Series (Daily)"]
-        chart_data = []
-        for date_str, day_data in time_series.items():
-            chart_data.append({
-                'date': date_str,
-                'close': float(day_data["4. close"])
-            })
-        chart_data.sort(key=lambda x: x['date'])
-        return jsonify(chart_data)
-    except Exception as e:
-        return jsonify({'error': f'Failed to fetch chart data for symbol {symbol}: {str(e)}'}), 400
+  // Render trade box based on selected account type
+  const renderTradeBox = () => {
+    if (selectedAccount.type === 'global') {
+      return (
+        <div className="trade-box">
+          <h3>Trade Stocks (Global)</h3>
+          <div className="trade-chart-container" style={{ display: 'flex', gap: '20px' }}>
+            <div className="trade-inputs" style={{ flex: 1 }}>
+              <div>
+                <input
+                  type="text"
+                  placeholder="Stock Symbol"
+                  value={stockSymbol}
+                  onChange={(e) => setStockSymbol(e.target.value)}
+                />
+                <button onClick={getStockPrice}>Get Price</button>
+                {stockPrice !== null && <p>Price: ${Number(stockPrice).toFixed(2)}</p>}
+              </div>
+              <div>
+                <input
+                  type="number"
+                  placeholder="Quantity"
+                  value={tradeQuantity}
+                  onChange={(e) => setTradeQuantity(Number(e.target.value))}
+                />
+              </div>
+              <div>
+                <button onClick={buyStockGlobal}>Buy</button>
+                <button onClick={sellStockGlobal}>Sell</button>
+              </div>
+              {tradeMessage && <p>{tradeMessage}</p>}
+            </div>
+            <div className="trade-chart" style={{ flex: 1, minHeight: '300px' }}>
+              {chartData ? (
+                <Line data={chartData} options={{ responsive: true, maintainAspectRatio: false }} />
+              ) : (
+                <p>No chart data available</p>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    } else if (selectedAccount.type === 'competition') {
+      return (
+        <div className="trade-box">
+          <h3>Trade Stocks (Competition - Individual)</h3>
+          <div className="trade-chart-container" style={{ display: 'flex', gap: '20px' }}>
+            <div className="trade-inputs" style={{ flex: 1 }}>
+              <div>
+                <input
+                  type="text"
+                  placeholder="Stock Symbol"
+                  value={stockSymbol}
+                  onChange={(e) => setStockSymbol(e.target.value)}
+                />
+                <button onClick={getStockPrice}>Get Price</button>
+                {stockPrice !== null && <p>Price: ${Number(stockPrice).toFixed(2)}</p>}
+              </div>
+              <div>
+                <input
+                  type="number"
+                  placeholder="Quantity"
+                  value={tradeQuantity}
+                  onChange={(e) => setTradeQuantity(Number(e.target.value))}
+                />
+              </div>
+              <div>
+                <button onClick={buyStockCompetition}>Buy</button>
+                <button onClick={sellStockCompetition}>Sell</button>
+              </div>
+              {tradeMessage && <p>{tradeMessage}</p>}
+            </div>
+            <div className="trade-chart" style={{ flex: 1, minHeight: '300px' }}>
+              {chartData ? (
+                <Line data={chartData} options={{ responsive: true, maintainAspectRatio: false }} />
+              ) : (
+                <p>No chart data available</p>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    } else if (selectedAccount.type === 'team') {
+      return (
+        <div className="trade-box">
+          <h3>Trade Stocks (Competition - Team)</h3>
+          <div className="trade-chart-container" style={{ display: 'flex', gap: '20px' }}>
+            <div className="trade-inputs" style={{ flex: 1 }}>
+              <div>
+                <input
+                  type="text"
+                  placeholder="Stock Symbol"
+                  value={stockSymbol}
+                  onChange={(e) => setStockSymbol(e.target.value)}
+                />
+                <button onClick={getStockPrice}>Get Price</button>
+                {stockPrice !== null && <p>Price: ${Number(stockPrice).toFixed(2)}</p>}
+              </div>
+              <div>
+                <input
+                  type="number"
+                  placeholder="Quantity"
+                  value={tradeQuantity}
+                  onChange={(e) => setTradeQuantity(Number(e.target.value))}
+                />
+              </div>
+              <div>
+                <button onClick={buyStockTeam}>Buy</button>
+                <button onClick={sellStockTeam}>Sell</button>
+              </div>
+              {tradeMessage && <p>{tradeMessage}</p>}
+            </div>
+            <div className="trade-chart" style={{ flex: 1, minHeight: '300px' }}>
+              {chartData ? (
+                <Line data={chartData} options={{ responsive: true, maintainAspectRatio: false }} />
+              ) : (
+                <p>No chart data available</p>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+  };
 
-# --------------------
-# Global Trading Endpoints
-# --------------------
-@app.route('/buy', methods=['POST'])
-def buy_stock():
-    data = request.get_json()
-    username = data.get('username')
-    symbol = data.get('symbol')
-    quantity = int(data.get('quantity'))
-    try:
-        price = get_current_price(symbol)
-    except Exception as e:
-        return jsonify({'message': f'Error fetching price for symbol {symbol}: {str(e)}'}), 400
-    cost = quantity * price
-    user = User.query.filter_by(username=username).first()
-    if not user:
-        return jsonify({'message': 'User not found'}), 404
-    if user.cash_balance < cost:
-        return jsonify({'message': 'Insufficient funds'}), 400
-    user.cash_balance -= cost
-    existing = Holding.query.filter_by(user_id=user.id, symbol=symbol).first()
-    if existing:
-        existing.quantity += quantity
-    else:
-        new_hold = Holding(user_id=user.id, symbol=symbol, quantity=quantity, buy_price=price)
-        db.session.add(new_hold)
-    db.session.commit()
-    return jsonify({'message': 'Buy successful', 'cash_balance': user.cash_balance})
+  return (
+    <div className="dashboard-container">
+      {isLoggedIn ? (
+        <div>
+          {/* Account Switcher */}
+          <div className="account-switcher">
+            <button onClick={() => setSelectedAccount({ type: 'global' })}>Global Account</button>
+            {competitionAccounts.map(acc => (
+              <button
+                key={acc.code}
+                onClick={() => setSelectedAccount({ type: 'competition', id: acc.code })}
+              >
+                {acc.name} (Individual - {acc.code})
+              </button>
+            ))}
+            {teamCompetitionAccounts.map(teamAcc => (
+              <button
+                key={teamAcc.team_id}
+                onClick={() =>
+                  setSelectedAccount({
+                    type: 'team',
+                    team_id: teamAcc.team_id,
+                    competition_code: teamAcc.code
+                  })
+                }
+              >
+                {teamAcc.name} (Team)
+              </button>
+            ))}
+          </div>
+          {/* Logout Button */}
+          <button className="logout-button" onClick={handleLogout}>Logout</button>
 
-@app.route('/sell', methods=['POST'])
-def sell_stock():
-    data = request.get_json()
-    username = data.get('username')
-    symbol = data.get('symbol')
-    quantity = int(data.get('quantity'))
-    try:
-        price = get_current_price(symbol)
-    except Exception as e:
-        return jsonify({'message': f'Error fetching price for symbol {symbol}: {str(e)}'}), 400
-    proceeds = quantity * price
-    user = User.query.filter_by(username=username).first()
-    if not user:
-        return jsonify({'message': 'User not found'}), 404
-    holding = Holding.query.filter_by(user_id=user.id, symbol=symbol).first()
-    if not holding or holding.quantity < quantity:
-        return jsonify({'message': 'Not enough shares to sell'}), 400
-    holding.quantity -= quantity
-    if holding.quantity == 0:
-        db.session.delete(holding)
-    user.cash_balance += proceeds
-    db.session.commit()
-    return jsonify({'message': 'Sell successful', 'cash_balance': user.cash_balance})
+          {renderAccountDetails()}
+          {renderPortfolioBox()}
+          {renderTradeBox()}
 
-# --------------------
-# Competition Endpoints (Individual)
-# --------------------
-@app.route('/competition/create', methods=['POST'])
-def create_competition():
-    data = request.get_json()
-    username = data.get('username')
-    name = data.get('name')
-    user = User.query.filter_by(username=username).first()
-    if not user:
-        return jsonify({'message': 'User not found'}), 404
-    code = secrets.token_hex(4)
-    while Competition.query.filter_by(code=code).first():
-        code = secrets.token_hex(4)
-    comp = Competition(code=code, name=name, created_by=user.id)
-    db.session.add(comp)
-    db.session.commit()
-    return jsonify({'message': 'Competition created successfully', 'competition_code': code})
+          {/* Leaderboard Rendering */}
+          {selectedAccount.type === 'competition' && (
+            <div className="leaderboard-box">
+              <Leaderboard competitionCode={selectedAccount.id} variant="competition" />
+            </div>
+          )}
+          {selectedAccount.type === 'team' && (
+            <div className="leaderboard-box">
+              {/* For team accounts, you can render the team leaderboard variant */}
+              <Leaderboard competitionCode={selectedAccount.competition_code} variant="team" />
+            </div>
+          )}
 
-@app.route('/competition/join', methods=['POST'])
-def join_competition():
-    data = request.get_json()
-    username = data.get('username')
-    code = data.get('competition_code')
-    user = User.query.filter_by(username=username).first()
-    if not user:
-        return jsonify({'message': 'User not found'}), 404
-    comp = Competition.query.filter_by(code=code).first()
-    if not comp:
-        return jsonify({'message': 'Competition not found'}), 404
-    existing = CompetitionMember.query.filter_by(competition_id=comp.id, user_id=user.id).first()
-    if existing:
-        return jsonify({'message': 'User already joined this competition'}), 200
-    new_member = CompetitionMember(competition_id=comp.id, user_id=user.id, cash_balance=100000)
-    db.session.add(new_member)
-    db.session.commit()
-    return jsonify({'message': 'Successfully joined competition'})
+          {/* Competition Section */}
+          <div className="competition-section">
+            <Competition />
+          </div>
 
-@app.route('/competition/buy', methods=['POST'])
-def competition_buy():
-    data = request.get_json()
-    username = data.get('username')
-    competition_code = data.get('competition_code')
-    symbol = data.get('symbol')
-    quantity = int(data.get('quantity'))
-    user = User.query.filter_by(username=username).first()
-    if not user:
-        return jsonify({'message': 'User not found'}), 404
-    comp = Competition.query.filter_by(code=competition_code).first()
-    if not comp:
-        return jsonify({'message': 'Competition not found'}), 404
-    member = CompetitionMember.query.filter_by(competition_id=comp.id, user_id=user.id).first()
-    if not member:
-        return jsonify({'message': 'User is not a member of this competition'}), 404
-    try:
-        price = get_current_price(symbol)
-    except Exception as e:
-        return jsonify({'message': f'Error fetching price for symbol {symbol}: {str(e)}'}), 400
-    cost = price * quantity
-    if member.cash_balance < cost:
-        return jsonify({'message': 'Insufficient funds in competition account'}), 400
-    member.cash_balance -= cost
-    existing_holding = CompetitionHolding.query.filter_by(competition_member_id=member.id, symbol=symbol).first()
-    if existing_holding:
-        existing_holding.quantity += quantity
-    else:
-        new_holding = CompetitionHolding(competition_member_id=member.id, symbol=symbol, quantity=quantity, buy_price=price)
-        db.session.add(new_holding)
-    db.session.commit()
-    return jsonify({'message': 'Competition buy successful', 'competition_cash': member.cash_balance})
+          {/* Teams Section */}
+          <div className="teams-section">
+            <h2>Teams</h2>
+            <div className="team-form">
+              <h3>Create Team</h3>
+              <input
+                type="text"
+                placeholder="Enter Team Name"
+                value={teamName}
+                onChange={(e) => setTeamName(e.target.value)}
+              />
+              <button className="team-button" onClick={createTeam}>Create Team</button>
+            </div>
+            <div className="team-form">
+              <h3>Join Team</h3>
+              <input
+                type="text"
+                placeholder="Enter Team Code"
+                value={joinTeamCode}
+                onChange={(e) => setJoinTeamCode(e.target.value)}
+              />
+              <button className="team-button" onClick={joinTeam}>Join Team</button>
+            </div>
+            {teamMessage && <p>{teamMessage}</p>}
+          </div>
+        </div>
+      ) : (
+        <div className="login-box">
+          {isRegistering ? (
+            <form onSubmit={handleRegister}>
+              <h2>Create Account</h2>
+              <input
+                type="text"
+                placeholder="Enter username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+              />
+              <input
+                type="password"
+                placeholder="Enter password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+              <button type="submit">Create Account</button>
+              <p>
+                Already have an account?{' '}
+                <a href="#" onClick={(e) => { e.preventDefault(); setIsRegistering(false); }}>
+                  Login
+                </a>
+              </p>
+            </form>
+          ) : (
+            <form onSubmit={handleLogin}>
+              <h2>Login</h2>
+              <input
+                type="text"
+                placeholder="Enter username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+              />
+              <input
+                type="password"
+                placeholder="Enter password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+              <button type="submit">Login</button>
+              <p>
+                Don&apos;t have an account?{' '}
+                <a href="#" onClick={(e) => { e.preventDefault(); setIsRegistering(true); }}>
+                  Create Account
+                </a>
+              </p>
+            </form>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
 
-@app.route('/competition/sell', methods=['POST'])
-def competition_sell():
-    data = request.get_json()
-    username = data.get('username')
-    competition_code = data.get('competition_code')
-    symbol = data.get('symbol')
-    quantity = int(data.get('quantity'))
-    user = User.query.filter_by(username=username).first()
-    if not user:
-        return jsonify({'message': 'User not found'}), 404
-    comp = Competition.query.filter_by(code=competition_code).first()
-    if not comp:
-        return jsonify({'message': 'Competition not found'}), 404
-    member = CompetitionMember.query.filter_by(competition_id=comp.id, user_id=user.id).first()
-    if not member:
-        return jsonify({'message': 'User is not a member of this competition'}), 404
-    holding = CompetitionHolding.query.filter_by(competition_member_id=member.id, symbol=symbol).first()
-    if not holding or holding.quantity < quantity:
-        return jsonify({'message': 'Not enough shares to sell in competition account'}), 400
-    try:
-        price = get_current_price(symbol)
-    except Exception as e:
-        return jsonify({'message': f'Error fetching price for symbol {symbol}: {str(e)}'}), 400
-    proceeds = price * quantity
-    holding.quantity -= quantity
-    if holding.quantity == 0:
-        db.session.delete(holding)
-    member.cash_balance += proceeds
-    db.session.commit()
-    return jsonify({'message': 'Competition sell successful', 'competition_cash': member.cash_balance})
-
-# --------------------
-# Endpoints for Team (Global Team Account)
-# --------------------
-@app.route('/team/create', methods=['POST'])
-def create_team():
-    data = request.get_json()
-    username = data.get('username')
-    team_name = data.get('team_name')
-    
-    user = User.query.filter_by(username=username).first()
-    if not user:
-        return jsonify({'message': 'User not found'}), 404
-    
-    team = Team(name=team_name, created_by=user.id)
-    db.session.add(team)
-    db.session.commit()
-    
-    # Add the creator as the first team member.
-    team_member = TeamMember(team_id=team.id, user_id=user.id)
-    db.session.add(team_member)
-    db.session.commit()
-    
-    return jsonify({'message': 'Team created successfully', 'team_id': team.id, 'team_code': team.id})
-
-@app.route('/team/join', methods=['POST'])
-def join_team():
-    data = request.get_json()
-    username = data.get('username')
-    team_code = data.get('team_code')
-    
-    user = User.query.filter_by(username=username).first()
-    if not user:
-        return jsonify({'message': 'User not found'}), 404
-    
-    team = Team.query.filter_by(id=team_code).first()
-    if not team:
-        return jsonify({'message': 'Team not found'}), 404
-    
-    if TeamMember.query.filter_by(team_id=team.id, user_id=user.id).first():
-        return jsonify({'message': 'User already in the team'}), 200
-    
-    team_member = TeamMember(team_id=team.id, user_id=user.id)
-    db.session.add(team_member)
-    db.session.commit()
-    return jsonify({'message': 'Joined team successfully'})
-
-@app.route('/team/buy', methods=['POST'])
-def team_buy():
-    data = request.get_json()
-    username = data.get('username')
-    team_id = data.get('team_id')
-    symbol = data.get('symbol')
-    quantity = int(data.get('quantity'))
-    
-    user = User.query.filter_by(username=username).first()
-    if not user:
-        return jsonify({'message': 'User not found'}), 404
-    
-    team = Team.query.get(team_id)
-    if not team:
-        return jsonify({'message': 'Team not found'}), 404
-    
-    if not TeamMember.query.filter_by(team_id=team_id, user_id=user.id).first():
-        return jsonify({'message': 'User is not a member of this team'}), 403
-    
-    try:
-        price = get_current_price(symbol)
-    except Exception as e:
-        return jsonify({'message': f'Error fetching price for symbol {symbol}: {str(e)}'}), 400
-    
-    cost = price * quantity
-    if team.cash_balance < cost:
-        return jsonify({'message': 'Insufficient team funds'}), 400
-    
-    team.cash_balance -= cost
-    holding = TeamHolding.query.filter_by(team_id=team_id, symbol=symbol).first()
-    if holding:
-        holding.quantity += quantity
-    else:
-        new_holding = TeamHolding(team_id=team_id, symbol=symbol, quantity=quantity, buy_price=price)
-        db.session.add(new_holding)
-    
-    db.session.commit()
-    return jsonify({'message': 'Team buy successful', 'team_cash': team.cash_balance})
-
-@app.route('/team/sell', methods=['POST'])
-def team_sell():
-    data = request.get_json()
-    username = data.get('username')
-    team_id = data.get('team_id')
-    symbol = data.get('symbol')
-    quantity = int(data.get('quantity'))
-    
-    user = User.query.filter_by(username=username).first()
-    if not user:
-        return jsonify({'message': 'User not found'}), 404
-    
-    team = Team.query.get(team_id)
-    if not team:
-        return jsonify({'message': 'Team not found'}), 404
-    
-    if not TeamMember.query.filter_by(team_id=team_id, user_id=user.id).first():
-        return jsonify({'message': 'User is not a member of this team'}), 403
-    
-    try:
-        price = get_current_price(symbol)
-    except Exception as e:
-        return jsonify({'message': f'Error fetching price for symbol {symbol}: {str(e)}'}), 400
-    
-    proceeds = price * quantity
-    holding = TeamHolding.query.filter_by(team_id=team_id, symbol=symbol).first()
-    if not holding or holding.quantity < quantity:
-        return jsonify({'message': 'Not enough shares to sell'}), 400
-    holding.quantity -= quantity
-    if holding.quantity == 0:
-        db.session.delete(holding)
-    team.cash_balance += proceeds
-    db.session.commit()
-    return jsonify({'message': 'Team sell successful', 'team_cash': team.cash_balance})
-
-# --------------------
-# Endpoints for Competition Team (Teams participating in Competitions)
-# --------------------
-@app.route('/competition/team/join', methods=['POST'])
-def competition_team_join():
-    data = request.get_json()
-    username = data.get('username')
-    competition_code = data.get('competition_code')
-    team_code = data.get('team_code')
-    
-    user = User.query.filter_by(username=username).first()
-    if not user:
-        return jsonify({'message': 'User not found'}), 404
-    
-    team = Team.query.filter_by(id=team_code).first()
-    if not team:
-        return jsonify({'message': 'Team not found'}), 404
-    if not TeamMember.query.filter_by(team_id=team.id, user_id=user.id).first():
-        return jsonify({'message': 'User is not a member of this team'}), 403
-
-    comp = Competition.query.filter_by(code=competition_code).first()
-    if not comp:
-        return jsonify({'message': 'Competition not found'}), 404
-    
-    existing = CompetitionTeam.query.filter_by(competition_id=comp.id, team_id=team.id).first()
-    if existing:
-        return jsonify({'message': 'Team already joined this competition'}), 200
-
-    comp_team = CompetitionTeam(competition_id=comp.id, team_id=team.id, cash_balance=100000)
-    db.session.add(comp_team)
-    db.session.commit()
-    return jsonify({'message': 'Team successfully joined competition'})
-
-@app.route('/competition/team/buy', methods=['POST'])
-def competition_team_buy():
-    data = request.get_json()
-    username = data.get('username')
-    competition_code = data.get('competition_code')
-    team_id = data.get('team_id')
-    symbol = data.get('symbol')
-    quantity = int(data.get('quantity'))
-    
-    user = User.query.filter_by(username=username).first()
-    if not user:
-        return jsonify({'message': 'User not found'}), 404
-
-    comp = Competition.query.filter_by(code=competition_code).first()
-    if not comp:
-        return jsonify({'message': 'Competition not found'}), 404
-
-    comp_team = CompetitionTeam.query.filter_by(competition_id=comp.id, team_id=team_id).first()
-    if not comp_team:
-        return jsonify({'message': 'Team is not part of this competition'}), 404
-
-    try:
-        price = get_current_price(symbol)
-    except Exception as e:
-        return jsonify({'message': f'Error fetching price for symbol {symbol}: {str(e)}'}), 400
-
-    cost = price * quantity
-    if comp_team.cash_balance < cost:
-        return jsonify({'message': 'Insufficient funds in competition team account'}), 400
-
-    comp_team.cash_balance -= cost
-    holding = CompetitionTeamHolding.query.filter_by(competition_team_id=comp_team.id, symbol=symbol).first()
-    if holding:
-        holding.quantity += quantity
-    else:
-        new_holding = CompetitionTeamHolding(competition_team_id=comp_team.id, symbol=symbol, quantity=quantity, buy_price=price)
-        db.session.add(new_holding)
-    db.session.commit()
-    return jsonify({'message': 'Competition team buy successful', 'competition_team_cash': comp_team.cash_balance})
-
-@app.route('/competition/team/sell', methods=['POST'])
-def competition_team_sell():
-    data = request.get_json()
-    username = data.get('username')
-    competition_code = data.get('competition_code')
-    team_id = data.get('team_id')
-    symbol = data.get('symbol')
-    quantity = int(data.get('quantity'))
-    
-    user = User.query.filter_by(username=username).first()
-    if not user:
-        return jsonify({'message': 'User not found'}), 404
-
-    comp = Competition.query.filter_by(code=competition_code).first()
-    if not comp:
-        return jsonify({'message': 'Competition not found'}), 404
-
-    comp_team = CompetitionTeam.query.filter_by(competition_id=comp.id, team_id=team_id).first()
-    if not comp_team:
-        return jsonify({'message': 'Team is not part of this competition'}), 404
-
-    try:
-        price = get_current_price(symbol)
-    except Exception as e:
-        return jsonify({'message': f'Error fetching price for symbol {symbol}: {str(e)}'}), 400
-
-    proceeds = price * quantity
-    holding = CompetitionTeamHolding.query.filter_by(competition_team_id=comp_team.id, symbol=symbol).first()
-    if not holding or holding.quantity < quantity:
-        return jsonify({'message': 'Not enough shares to sell in competition team account'}), 400
-    holding.quantity -= quantity
-    if holding.quantity == 0:
-        db.session.delete(holding)
-    comp_team.cash_balance += proceeds
-    db.session.commit()
-    return jsonify({'message': 'Competition team sell successful', 'competition_team_cash': comp_team.cash_balance})
-
-# --------------------
-# Unified Competition Leaderboard (Individuals and Teams)
-# --------------------
-@app.route('/competition/<code>/leaderboard', methods=['GET'])
-def competition_leaderboard(code):
-    comp = Competition.query.filter_by(code=code).first()
-    if not comp:
-        return jsonify({'message': 'Competition not found'}), 404
-    leaderboard = []
-    # Process individual competition members.
-    members = CompetitionMember.query.filter_by(competition_id=comp.id).all()
-    for m in members:
-        total = m.cash_balance
-        choldings = CompetitionHolding.query.filter_by(competition_member_id=m.id).all()
-        for h in choldings:
-            try:
-                price = get_current_price(h.symbol)
-            except Exception:
-                price = 0
-            total += price * h.quantity
-        user = db.session.get(User, m.user_id)
-        leaderboard.append({'name': user.username, 'total_value': total})
-    # Process competition teams.
-    comp_teams = CompetitionTeam.query.filter_by(competition_id=comp.id).all()
-    for ct in comp_teams:
-        total = ct.cash_balance
-        tholdings = CompetitionTeamHolding.query.filter_by(competition_team_id=ct.id).all()
-        for h in tholdings:
-            try:
-                price = get_current_price(h.symbol)
-            except Exception:
-                price = 0
-            total += price * h.quantity
-        team = db.session.get(Team, ct.team_id)
-        leaderboard.append({'name': team.name, 'total_value': total})
-    leaderboard_sorted = sorted(leaderboard, key=lambda x: x['total_value'], reverse=True)
-    return jsonify(leaderboard_sorted)
-
-# --------------------
-# Competition Member List Endpoint
-# --------------------
-@app.route('/competition/member', methods=['GET'])
-def competition_member():
-    username = request.args.get('username')
-    user = User.query.filter_by(username=username).first()
-    if not user:
-        return jsonify({'message': 'User not found'}), 404
-    memberships = CompetitionMember.query.filter_by(user_id=user.id).all()
-    comps = []
-    for m in memberships:
-        comp = db.session.get(Competition, m.competition_id)
-        if comp:
-            comps.append({
-                'code': comp.code,
-                'name': comp.name,
-                'competition_cash': m.cash_balance,
-                'created_at': comp.created_at.strftime('%Y-%m-%d %H:%M:%S')
-            })
-    return jsonify(comps)
-
-# --------------------
-# Run the app
-# --------------------
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 10000))
-    app.run(debug=True, host='0.0.0.0', port=port)
+export default Dashboard;
