@@ -101,6 +101,114 @@ class CompetitionTeamHolding(db.Model):
 with app.app_context():
     db.create_all()
 
+@app.route('/user', methods=['GET'])
+def get_user():
+    username = request.args.get('username')
+    if not username:
+        return jsonify({'message': 'Username is required'}), 400
+    user = User.query.filter_by(username=username).first()
+    if not user:
+        return jsonify({'message': 'User not found'}), 404
+
+    # Global account portfolio and value
+    holdings = Holding.query.filter_by(user_id=user.id).all()
+    global_portfolio = []
+    total_global = user.cash_balance
+    for h in holdings:
+        try:
+            price = get_current_price(h.symbol)
+        except Exception:
+            price = 0
+        value = price * h.quantity
+        total_global += value
+        global_portfolio.append({
+            'symbol': h.symbol,
+            'quantity': h.quantity,
+            'current_price': price,
+            'total_value': value,
+            'buy_price': h.buy_price
+        })
+
+    # Individual competition accounts
+    competition_accounts = []
+    memberships = CompetitionMember.query.filter_by(user_id=user.id).all()
+    for m in memberships:
+        comp = db.session.get(Competition, m.competition_id)
+        if comp:
+            comp_holdings = CompetitionHolding.query.filter_by(competition_member_id=m.id).all()
+            comp_portfolio = []
+            total_comp_holdings = 0
+            for ch in comp_holdings:
+                try:
+                    price = get_current_price(ch.symbol)
+                except Exception:
+                    price = 0
+                value = price * ch.quantity
+                total_comp_holdings += value
+                comp_portfolio.append({
+                    'symbol': ch.symbol,
+                    'quantity': ch.quantity,
+                    'current_price': price,
+                    'total_value': value,
+                    'buy_price': ch.buy_price
+                })
+            total_comp_value = m.cash_balance + total_comp_holdings
+            competition_accounts.append({
+                'code': comp.code,
+                'name': comp.name,
+                'competition_cash': m.cash_balance,
+                'portfolio': comp_portfolio,
+                'total_value': total_comp_value
+            })
+
+    # Team competition accounts:
+    # First, get all teams the user belongs to.
+    team_memberships = TeamMember.query.filter_by(user_id=user.id).all()
+    team_competitions = []
+    for tm in team_memberships:
+        # For each team, find all competition entries (CompetitionTeam)
+        ct_entries = CompetitionTeam.query.filter_by(team_id=tm.team_id).all()
+        for ct in ct_entries:
+            comp = db.session.get(Competition, ct.competition_id)
+            if comp:
+                ct_holdings = CompetitionTeamHolding.query.filter_by(competition_team_id=ct.id).all()
+                comp_team_portfolio = []
+                total_holdings = 0
+                for cht in ct_holdings:
+                    try:
+                        price = get_current_price(cht.symbol)
+                    except Exception:
+                        price = 0
+                    value = price * cht.quantity
+                    total_holdings += value
+                    comp_team_portfolio.append({
+                        'symbol': cht.symbol,
+                        'quantity': cht.quantity,
+                        'current_price': price,
+                        'total_value': value,
+                        'buy_price': cht.buy_price
+                    })
+                total_value = ct.cash_balance + total_holdings
+                team_competitions.append({
+                    'code': comp.code,
+                    'name': comp.name,
+                    'competition_cash': ct.cash_balance,
+                    'portfolio': comp_team_portfolio,
+                    'total_value': total_value,
+                    'team_id': ct.team_id
+                })
+
+    return jsonify({
+        'username': user.username,
+        'global_account': {
+            'cash_balance': user.cash_balance,
+            'portfolio': global_portfolio,
+            'total_value': total_global
+        },
+        'competition_accounts': competition_accounts,
+        'team_competitions': team_competitions
+    })
+
 # --------------------
 # Helper Function: Fetch current price from Alpha Vantage
 # --------------------
