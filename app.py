@@ -706,13 +706,14 @@ def competition_team_sell():
 # --------------------
 # Unified Competition Leaderboard (Individuals and Teams)
 # --------------------
+# Individual Competition Leaderboard Endpoint
 @app.route('/competition/<code>/leaderboard', methods=['GET'])
 def competition_leaderboard(code):
     comp = Competition.query.filter_by(code=code).first()
     if not comp:
         return jsonify({'message': 'Competition not found'}), 404
     leaderboard = []
-    # Process individual competition members.
+    # Process individual competition members only.
     members = CompetitionMember.query.filter_by(competition_id=comp.id).all()
     for m in members:
         total = m.cash_balance
@@ -725,7 +726,17 @@ def competition_leaderboard(code):
             total += price * h.quantity
         user = db.session.get(User, m.user_id)
         leaderboard.append({'name': user.username, 'total_value': total})
-    # Process competition teams.
+    leaderboard_sorted = sorted(leaderboard, key=lambda x: x['total_value'], reverse=True)
+    return jsonify(leaderboard_sorted)
+
+# Team Competition Leaderboard Endpoint
+@app.route('/competition/<code>/team_leaderboard', methods=['GET'])
+def competition_team_leaderboard(code):
+    comp = Competition.query.filter_by(code=code).first()
+    if not comp:
+        return jsonify({'message': 'Competition not found'}), 404
+    leaderboard = []
+    # Process team competition entries only.
     comp_teams = CompetitionTeam.query.filter_by(competition_id=comp.id).all()
     for ct in comp_teams:
         total = ct.cash_balance
@@ -741,27 +752,6 @@ def competition_leaderboard(code):
     leaderboard_sorted = sorted(leaderboard, key=lambda x: x['total_value'], reverse=True)
     return jsonify(leaderboard_sorted)
 
-# --------------------
-# Competition Member List Endpoint
-# --------------------
-@app.route('/competition/member', methods=['GET'])
-def competition_member():
-    username = request.args.get('username')
-    user = User.query.filter_by(username=username).first()
-    if not user:
-        return jsonify({'message': 'User not found'}), 404
-    memberships = CompetitionMember.query.filter_by(user_id=user.id).all()
-    comps = []
-    for m in memberships:
-        comp = db.session.get(Competition, m.competition_id)
-        if comp:
-            comps.append({
-                'code': comp.code,
-                'name': comp.name,
-                'competition_cash': m.cash_balance,
-                'created_at': comp.created_at.strftime('%Y-%m-%d %H:%M:%S')
-            })
-    return jsonify(comps)
 
 # --------------------
 # Run the app
