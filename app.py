@@ -101,6 +101,82 @@ class CompetitionTeamHolding(db.Model):
 with app.app_context():
     db.create_all()
 
+# --------------------
+# Helper Function: Fetch current price from Alpha Vantage
+# --------------------
+def get_current_price(symbol):
+    url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={symbol}&apikey={ALPHA_VANTAGE_API_KEY}"
+    response = requests.get(url)
+    if response.status_code != 200:
+        raise Exception(f"Alpha Vantage API error: {response.status_code}")
+    data = response.json()
+    if "Global Quote" not in data or not data["Global Quote"]:
+        raise Exception(f"No data found for symbol {symbol}")
+    global_quote = data["Global Quote"]
+    if "05. price" not in global_quote:
+        raise Exception(f"No price information available for symbol {symbol}")
+    return float(global_quote["05. price"])
+
+# --------------------
+# Endpoints for Registration and Login
+# --------------------
+@app.route('/register', methods=['POST'])
+def register():
+    data = request.get_json()
+    username = data.get('username')
+    password = data.get('password')
+    if User.query.filter_by(username=username).first():
+        return jsonify({'message': 'User already exists'}), 400
+    new_user = User(username=username)
+    new_user.set_password(password)
+    db.session.add(new_user)
+    db.session.commit()
+    return jsonify({'message': 'User created successfully'})
+
+@app.route('/login', methods=['POST'])
+def login():
+    data = request.get_json()
+    username = data.get('username')
+    password = data.get('password')
+    user = User.query.filter_by(username=username).first()
+    if user and user.check_password(password):
+        memberships = CompetitionMember.query.filter_by(user_id=user.id).all()
+        competition_accounts = []
+        for m in memberships:
+            comp = db.session.get(Competition, m.competition_id)
+            if comp:
+                competition_accounts.append({
+                    'code': comp.code,
+                    'name': comp.name,
+                    'competition_cash': m.cash_balance,
+                    'total_value': m.cash_balance,
+                    'portfolio': []  # To be populated if trades exist.
+                })
+        # Also retrieve teams that the user is a member of (global team accounts)
+        team_memberships = TeamMember.query.filter_by(user_id=user.id).all()
+        teams = []
+        for tm in team_memberships:
+            team = db.session.get(Team, tm.team_id)
+            if team:
+                teams.append({
+                    'team_id': team.id,
+                    'team_name': team.name,
+                    'team_cash': team.cash_balance
+                })
+        return jsonify({
+            'message': 'Login successful',
+            'username': user.username,
+            'cash_balance': user.cash_balance,
+            'global_account': {'cash_balance': user.cash_balance},
+            'competition_accounts': competition_accounts,
+            'teams': teams
+        })
+    else:
+        return jsonify({'message': 'Invalid credentials'}), 401
+
+# --------------------
+# Endpoint for Global User Data (including team competition accounts)
+# --------------------
 @app.route('/user', methods=['GET'])
 def get_user():
     username = request.args.get('username')
@@ -161,12 +237,10 @@ def get_user():
                 'total_value': total_comp_value
             })
 
-    # Team competition accounts:
-    # First, get all teams the user belongs to.
+    # Team competition accounts: get all teams the user belongs to and then find CompetitionTeam entries.
     team_memberships = TeamMember.query.filter_by(user_id=user.id).all()
     team_competitions = []
     for tm in team_memberships:
-        # For each team, find all competition entries (CompetitionTeam)
         ct_entries = CompetitionTeam.query.filter_by(team_id=tm.team_id).all()
         for ct in ct_entries:
             comp = db.session.get(Competition, ct.competition_id)
@@ -210,79 +284,8 @@ def get_user():
     })
 
 # --------------------
-# Helper Function: Fetch current price from Alpha Vantage
+# Stock Endpoints
 # --------------------
-def get_current_price(symbol):
-    url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={symbol}&apikey={ALPHA_VANTAGE_API_KEY}"
-    response = requests.get(url)
-    if response.status_code != 200:
-        raise Exception(f"Alpha Vantage API error: {response.status_code}")
-    data = response.json()
-    if "Global Quote" not in data or not data["Global Quote"]:
-        raise Exception(f"No data found for symbol {symbol}")
-    global_quote = data["Global Quote"]
-    if "05. price" not in global_quote:
-        raise Exception(f"No price information available for symbol {symbol}")
-    return float(global_quote["05. price"])
-
-# --------------------
-# Endpoints for Global Trading
-# --------------------
-@app.route('/register', methods=['POST'])
-def register():
-    data = request.get_json()
-    username = data.get('username')
-    password = data.get('password')
-    if User.query.filter_by(username=username).first():
-        return jsonify({'message': 'User already exists'}), 400
-    new_user = User(username=username)
-    new_user.set_password(password)
-    db.session.add(new_user)
-    db.session.commit()
-    return jsonify({'message': 'User created successfully'})
-
-@app.route('/login', methods=['POST'])
-def login():
-    data = request.get_json()
-    username = data.get('username')
-    password = data.get('password')
-    user = User.query.filter_by(username=username).first()
-    if user and user.check_password(password):
-        memberships = CompetitionMember.query.filter_by(user_id=user.id).all()
-        competition_accounts = []
-        for m in memberships:
-            comp = db.session.get(Competition, m.competition_id)
-            if comp:
-                competition_accounts.append({
-                    'code': comp.code,
-                    'name': comp.name,
-                    'competition_cash': m.cash_balance,
-                    'total_value': m.cash_balance,
-                    'portfolio': []  # To be populated if trades exist.
-                })
-        # Also retrieve teams that the user is a member of (global team accounts)
-        team_memberships = TeamMember.query.filter_by(user_id=user.id).all()
-        teams = []
-        for tm in team_memberships:
-            team = db.session.get(Team, tm.team_id)
-            if team:
-                teams.append({
-                    'team_id': team.id,
-                    'team_name': team.name,
-                    'team_cash': team.cash_balance
-                })
-        return jsonify({
-            'message': 'Login successful',
-            'username': user.username,
-            'cash_balance': user.cash_balance,
-            'global_account': {'cash_balance': user.cash_balance},
-            'competition_accounts': competition_accounts,
-            'teams': teams
-        })
-    else:
-        return jsonify({'message': 'Invalid credentials'}), 401
-
-# New stock endpoint using Alpha Vantage for current price
 @app.route('/stock/<symbol>', methods=['GET'])
 def get_stock(symbol):
     try:
@@ -293,7 +296,6 @@ def get_stock(symbol):
         app.logger.error(f"Error fetching data for {symbol}: {e}")
         return jsonify({'error': f'Failed to fetch data for symbol {symbol}: {str(e)}'}), 400
 
-# Stock chart endpoint using Alpha Vantage Daily Time Series
 @app.route('/stock_chart/<symbol>', methods=['GET'])
 def stock_chart(symbol):
     try:
@@ -316,7 +318,9 @@ def stock_chart(symbol):
     except Exception as e:
         return jsonify({'error': f'Failed to fetch chart data for symbol {symbol}: {str(e)}'}), 400
 
-# Global buy endpoint using Alpha Vantage
+# --------------------
+# Global Trading Endpoints
+# --------------------
 @app.route('/buy', methods=['POST'])
 def buy_stock():
     data = request.get_json()
@@ -343,7 +347,6 @@ def buy_stock():
     db.session.commit()
     return jsonify({'message': 'Buy successful', 'cash_balance': user.cash_balance})
 
-# Global sell endpoint using Alpha Vantage
 @app.route('/sell', methods=['POST'])
 def sell_stock():
     data = request.get_json()
@@ -368,77 +371,8 @@ def sell_stock():
     db.session.commit()
     return jsonify({'message': 'Sell successful', 'cash_balance': user.cash_balance})
 
-# Global user data endpoint (calculates portfolio values using current prices)
-@app.route('/user', methods=['GET'])
-def get_user():
-    username = request.args.get('username')
-    if not username:
-        return jsonify({'message': 'Username is required'}), 400
-    user = User.query.filter_by(username=username).first()
-    if not user:
-        return jsonify({'message': 'User not found'}), 404
-
-    holdings = Holding.query.filter_by(user_id=user.id).all()
-    global_portfolio = []
-    total_global = user.cash_balance
-    for h in holdings:
-        try:
-            price = get_current_price(h.symbol)
-        except Exception as e:
-            price = 0
-        value = price * h.quantity
-        total_global += value
-        global_portfolio.append({
-            'symbol': h.symbol,
-            'quantity': h.quantity,
-            'current_price': price,
-            'total_value': value,
-            'buy_price': h.buy_price
-        })
-    
-    memberships = CompetitionMember.query.filter_by(user_id=user.id).all()
-    competition_accounts = []
-    for m in memberships:
-        comp = db.session.get(Competition, m.competition_id)
-        if comp:
-            comp_holdings = CompetitionHolding.query.filter_by(competition_member_id=m.id).all()
-            comp_portfolio = []
-            total_comp_holdings = 0
-            for ch in comp_holdings:
-                try:
-                    price = get_current_price(ch.symbol)
-                except Exception as e:
-                    price = 0
-                value = price * ch.quantity
-                total_comp_holdings += value
-                comp_portfolio.append({
-                    'symbol': ch.symbol,
-                    'quantity': ch.quantity,
-                    'current_price': price,
-                    'total_value': value,
-                    'buy_price': ch.buy_price
-                })
-            total_comp_value = m.cash_balance + total_comp_holdings
-            competition_accounts.append({
-                'code': comp.code,
-                'name': comp.name,
-                'competition_cash': m.cash_balance,
-                'portfolio': comp_portfolio,
-                'total_value': total_comp_value
-            })
-
-    return jsonify({
-        'username': user.username,
-        'global_account': {
-            'cash_balance': user.cash_balance,
-            'portfolio': global_portfolio,
-            'total_value': total_global
-        },
-        'competition_accounts': competition_accounts
-    })
-
 # --------------------
-# Competition Endpoints
+# Competition Endpoints (Individual)
 # --------------------
 @app.route('/competition/create', methods=['POST'])
 def create_competition():
@@ -475,7 +409,6 @@ def join_competition():
     db.session.commit()
     return jsonify({'message': 'Successfully joined competition'})
 
-# Competition buy endpoint (individual)
 @app.route('/competition/buy', methods=['POST'])
 def competition_buy():
     data = request.get_json()
@@ -509,7 +442,6 @@ def competition_buy():
     db.session.commit()
     return jsonify({'message': 'Competition buy successful', 'competition_cash': member.cash_balance})
 
-# Competition sell endpoint (individual)
 @app.route('/competition/sell', methods=['POST'])
 def competition_sell():
     data = request.get_json()
@@ -563,7 +495,6 @@ def create_team():
     db.session.add(team_member)
     db.session.commit()
     
-    # Using team id as team_code for simplicity
     return jsonify({'message': 'Team created successfully', 'team_id': team.id, 'team_code': team.id})
 
 @app.route('/team/join', methods=['POST'])
@@ -604,7 +535,6 @@ def team_buy():
     if not team:
         return jsonify({'message': 'Team not found'}), 404
     
-    # Ensure the user is a member of the team.
     if not TeamMember.query.filter_by(team_id=team_id, user_id=user.id).first():
         return jsonify({'message': 'User is not a member of this team'}), 403
     
@@ -677,7 +607,6 @@ def competition_team_join():
     if not user:
         return jsonify({'message': 'User not found'}), 404
     
-    # Verify team exists and that the user is a member of the team.
     team = Team.query.filter_by(id=team_code).first()
     if not team:
         return jsonify({'message': 'Team not found'}), 404
@@ -714,7 +643,6 @@ def competition_team_buy():
     if not comp:
         return jsonify({'message': 'Competition not found'}), 404
 
-    # Verify that the team is participating in this competition.
     comp_team = CompetitionTeam.query.filter_by(competition_id=comp.id, team_id=team_id).first()
     if not comp_team:
         return jsonify({'message': 'Team is not part of this competition'}), 404
