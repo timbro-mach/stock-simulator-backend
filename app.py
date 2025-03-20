@@ -104,8 +104,11 @@ with app.app_context():
 # --------------------
 # Helper Function: Fetch current price from Alpha Vantage
 # --------------------
+# --------------------
+# Helper Function: Fetch current price from Alpha Vantage
+# --------------------
 def get_current_price(symbol):
-    url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={symbol}&apikey={ALPHA_VANTAGE_API_KEY}"
+    url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={symbol}&entitlement=realtime&apikey={ALPHA_VANTAGE_API_KEY}"
     response = requests.get(url)
     if response.status_code != 200:
         raise Exception(f"Alpha Vantage API error: {response.status_code}")
@@ -116,6 +119,7 @@ def get_current_price(symbol):
     if "05. price" not in global_quote:
         raise Exception(f"No price information available for symbol {symbol}")
     return float(global_quote["05. price"])
+
 
 # --------------------
 # Endpoints for Registration and Login
@@ -286,37 +290,57 @@ def get_user():
 # --------------------
 # Stock Endpoints
 # --------------------
+# --------------------
+# Fetch current price from Alpha Vantage (REAL-TIME)
+# --------------------
 @app.route('/stock/<symbol>', methods=['GET'])
 def get_stock(symbol):
     try:
         app.logger.info(f"Fetching current price for {symbol}")
-        price = get_current_price(symbol)
+        url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={symbol}&entitlement=realtime&apikey={ALPHA_VANTAGE_API_KEY}"
+        response = requests.get(url)
+        if response.status_code != 200:
+            raise Exception(f"Alpha Vantage API error: {response.status_code}")
+        data = response.json()
+        if "Global Quote" not in data or not data["Global Quote"]:
+            raise Exception(f"No data found for symbol {symbol}")
+        global_quote = data["Global Quote"]
+        if "05. price" not in global_quote:
+            raise Exception(f"No price information available for symbol {symbol}")
+        price = float(global_quote["05. price"])
         return jsonify({'symbol': symbol, 'price': price})
     except Exception as e:
         app.logger.error(f"Error fetching data for {symbol}: {e}")
         return jsonify({'error': f'Failed to fetch data for symbol {symbol}: {str(e)}'}), 400
 
+
+# --------------------
+# Fetch stock chart data from Alpha Vantage (REAL-TIME)
+# --------------------
 @app.route('/stock_chart/<symbol>', methods=['GET'])
 def stock_chart(symbol):
     try:
-        url = f"https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol={symbol}&apikey={ALPHA_VANTAGE_API_KEY}"
+        app.logger.info(f"Fetching chart data for {symbol}")
+        url = f"https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol={symbol}&interval=5min&entitlement=realtime&apikey={ALPHA_VANTAGE_API_KEY}"
         response = requests.get(url)
         if response.status_code != 200:
             return jsonify({'error': f"Alpha Vantage API error: {response.status_code}"}), 400
         data = response.json()
-        if "Time Series (Daily)" not in data:
+        if "Time Series (5min)" not in data:
             return jsonify({'error': f'No time series data found for symbol {symbol}'}), 404
-        time_series = data["Time Series (Daily)"]
+        time_series = data["Time Series (5min)"]
         chart_data = []
-        for date_str, day_data in time_series.items():
+        for date_str, data_point in time_series.items():
             chart_data.append({
                 'date': date_str,
-                'close': float(day_data["4. close"])
+                'close': float(data_point["4. close"])
             })
         chart_data.sort(key=lambda x: x['date'])
         return jsonify(chart_data)
     except Exception as e:
+        app.logger.error(f"Error fetching chart data for {symbol}: {e}")
         return jsonify({'error': f'Failed to fetch chart data for symbol {symbol}: {str(e)}'}), 400
+
 
 # --------------------
 # Global Trading Endpoints
