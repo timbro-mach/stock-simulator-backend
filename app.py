@@ -402,17 +402,18 @@ def sell_stock():
 def create_competition():
     data = request.get_json()
     username = data.get('username')
-    name = data.get('name')
+    competition_name = data.get('competition_name')  # Updated to match the frontend parameter
     user = User.query.filter_by(username=username).first()
     if not user:
         return jsonify({'message': 'User not found'}), 404
     code = secrets.token_hex(4)
     while Competition.query.filter_by(code=code).first():
         code = secrets.token_hex(4)
-    comp = Competition(code=code, name=name, created_by=user.id)
+    comp = Competition(code=code, name=competition_name, created_by=user.id)
     db.session.add(comp)
     db.session.commit()
     return jsonify({'message': 'Competition created successfully', 'competition_code': code})
+
 
 @app.route('/competition/join', methods=['POST'])
 def join_competition():
