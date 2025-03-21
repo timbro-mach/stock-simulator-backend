@@ -859,6 +859,22 @@ def admin_unfeature_competition():
     db.session.commit()
     return jsonify({'message': 'Competition un-featured successfully'})
 
+@app.route('/admin/set_admin', methods=['POST'])
+def set_admin():
+    data = request.get_json()
+    secret = data.get('secret')
+    if secret != "Timb3000!":
+        return jsonify({'message': 'Not authorized'}), 403
+
+    username = data.get('username')
+    user = User.query.filter_by(username=username).first()
+    if not user:
+        return jsonify({'message': 'User not found'}), 404
+
+    user.is_admin = True
+    db.session.commit()
+    return jsonify({'message': f"{username} is now an admin."})
+
 # --------------------
 # Run the app
 # --------------------
