@@ -45,6 +45,9 @@ class Competition(db.Model):
     name = db.Column(db.String(80), nullable=True)
     created_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    start_date = db.Column(db.DateTime, nullable=True)   # New field
+    end_date = db.Column(db.DateTime, nullable=True)     # New field
+    featured = db.Column(db.Boolean, default=False)      # New field
 
 class CompetitionMember(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -68,7 +71,7 @@ class Team(db.Model):
     name = db.Column(db.String(80), nullable=False)
     created_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    cash_balance = db.Column(db.Float, default=100000)  # Global team account cash
+    cash_balance = db.Column(db.Float, default=100000)
 
 class TeamMember(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -104,9 +107,6 @@ with app.app_context():
 # --------------------
 # Helper Function: Fetch current price from Alpha Vantage
 # --------------------
-# --------------------
-# Helper Function: Fetch current price from Alpha Vantage
-# --------------------
 def get_current_price(symbol):
     url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={symbol}&entitlement=realtime&apikey={ALPHA_VANTAGE_API_KEY}"
     response = requests.get(url)
@@ -119,7 +119,6 @@ def get_current_price(symbol):
     if "05. price" not in global_quote:
         raise Exception(f"No price information available for symbol {symbol}")
     return float(global_quote["05. price"])
-
 
 # --------------------
 # Endpoints for Registration and Login
@@ -156,7 +155,6 @@ def login():
                     'total_value': m.cash_balance,
                     'portfolio': []  # To be populated if trades exist.
                 })
-        # Also retrieve teams that the user is a member of (global team accounts)
         team_memberships = TeamMember.query.filter_by(user_id=user.id).all()
         teams = []
         for tm in team_memberships:
@@ -190,7 +188,6 @@ def get_user():
     if not user:
         return jsonify({'message': 'User not found'}), 404
 
-    # Global account portfolio and value
     holdings = Holding.query.filter_by(user_id=user.id).all()
     global_portfolio = []
     total_global = user.cash_balance
@@ -209,7 +206,6 @@ def get_user():
             'buy_price': h.buy_price
         })
 
-    # Individual competition accounts
     competition_accounts = []
     memberships = CompetitionMember.query.filter_by(user_id=user.id).all()
     for m in memberships:
@@ -241,7 +237,6 @@ def get_user():
                 'total_value': total_comp_value
             })
 
-    # Team competition accounts: get all teams the user belongs to and then find CompetitionTeam entries.
     team_memberships = TeamMember.query.filter_by(user_id=user.id).all()
     team_competitions = []
     for tm in team_memberships:
@@ -290,9 +285,6 @@ def get_user():
 # --------------------
 # Stock Endpoints
 # --------------------
-# --------------------
-# Fetch current price from Alpha Vantage (REAL-TIME)
-# --------------------
 @app.route('/stock/<symbol>', methods=['GET'])
 def get_stock(symbol):
     try:
@@ -313,10 +305,6 @@ def get_stock(symbol):
         app.logger.error(f"Error fetching data for {symbol}: {e}")
         return jsonify({'error': f'Failed to fetch data for symbol {symbol}: {str(e)}'}), 400
 
-
-# --------------------
-# Fetch stock chart data from Alpha Vantage (REAL-TIME)
-# --------------------
 @app.route('/stock_chart/<symbol>', methods=['GET'])
 def stock_chart(symbol):
     try:
@@ -340,7 +328,6 @@ def stock_chart(symbol):
     except Exception as e:
         app.logger.error(f"Error fetching chart data for {symbol}: {e}")
         return jsonify({'error': f'Failed to fetch chart data for symbol {symbol}: {str(e)}'}), 400
-
 
 # --------------------
 # Global Trading Endpoints
@@ -402,18 +389,24 @@ def sell_stock():
 def create_competition():
     data = request.get_json()
     username = data.get('username')
-    competition_name = data.get('competition_name')  # Updated to match the frontend parameter
+    competition_name = data.get('competition_name')
+    start_date_str = data.get('start_date')
+    end_date_str = data.get('end_date')
+    featured = data.get('featured', False)
     user = User.query.filter_by(username=username).first()
     if not user:
         return jsonify({'message': 'User not found'}), 404
     code = secrets.token_hex(4)
     while Competition.query.filter_by(code=code).first():
         code = secrets.token_hex(4)
-    comp = Competition(code=code, name=competition_name, created_by=user.id)
+    # Parse dates if provided (expected format: YYYY-MM-DD)
+    start_date = datetime.strptime(start_date_str, "%Y-%m-%d") if start_date_str else None
+    end_date = datetime.strptime(end_date_str, "%Y-%m-%d") if end_date_str else None
+    comp = Competition(code=code, name=competition_name, created_by=user.id,
+                       start_date=start_date, end_date=end_date, featured=bool(featured))
     db.session.add(comp)
     db.session.commit()
     return jsonify({'message': 'Competition created successfully', 'competition_code': code})
-
 
 @app.route('/competition/join', methods=['POST'])
 def join_competition():
@@ -515,7 +508,6 @@ def create_team():
     db.session.add(team)
     db.session.commit()
     
-    # Add the creator as the first team member.
     team_member = TeamMember(team_id=team.id, user_id=user.id)
     db.session.add(team_member)
     db.session.commit()
@@ -729,16 +721,32 @@ def competition_team_sell():
     return jsonify({'message': 'Competition team sell successful', 'competition_team_cash': comp_team.cash_balance})
 
 # --------------------
+# Featured Competitions Endpoint
+# --------------------
+@app.route('/featured_competitions', methods=['GET'])
+def featured_competitions():
+    now = datetime.utcnow()
+    # Return competitions that are featured and start in the future
+    comps = Competition.query.filter(Competition.featured == True, Competition.start_date != None, Competition.start_date > now).all()
+    result = []
+    for comp in comps:
+        result.append({
+            'code': comp.code,
+            'name': comp.name,
+            'start_date': comp.start_date.isoformat() if comp.start_date else None,
+            'end_date': comp.end_date.isoformat() if comp.end_date else None,
+        })
+    return jsonify(result)
+
+# --------------------
 # Unified Competition Leaderboard (Individuals and Teams)
 # --------------------
-# Individual Competition Leaderboard Endpoint
 @app.route('/competition/<code>/leaderboard', methods=['GET'])
 def competition_leaderboard(code):
     comp = Competition.query.filter_by(code=code).first()
     if not comp:
         return jsonify({'message': 'Competition not found'}), 404
     leaderboard = []
-    # Process individual competition members only.
     members = CompetitionMember.query.filter_by(competition_id=comp.id).all()
     for m in members:
         total = m.cash_balance
@@ -754,14 +762,12 @@ def competition_leaderboard(code):
     leaderboard_sorted = sorted(leaderboard, key=lambda x: x['total_value'], reverse=True)
     return jsonify(leaderboard_sorted)
 
-# Team Competition Leaderboard Endpoint
 @app.route('/competition/<code>/team_leaderboard', methods=['GET'])
 def competition_team_leaderboard(code):
     comp = Competition.query.filter_by(code=code).first()
     if not comp:
         return jsonify({'message': 'Competition not found'}), 404
     leaderboard = []
-    # Process team competition entries only.
     comp_teams = CompetitionTeam.query.filter_by(competition_id=comp.id).all()
     for ct in comp_teams:
         total = ct.cash_balance
@@ -776,7 +782,6 @@ def competition_team_leaderboard(code):
         leaderboard.append({'name': team.name, 'total_value': total})
     leaderboard_sorted = sorted(leaderboard, key=lambda x: x['total_value'], reverse=True)
     return jsonify(leaderboard_sorted)
-
 
 # --------------------
 # Run the app
