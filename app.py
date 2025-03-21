@@ -49,6 +49,7 @@ class Competition(db.Model):
     start_date = db.Column(db.DateTime, nullable=True)   # New field
     end_date = db.Column(db.DateTime, nullable=True)     # New field
     featured = db.Column(db.Boolean, default=False)      # New field
+    max_position_limit = db.Column(db.String(10), nullable=True)  # New field
 
 class CompetitionMember(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -170,7 +171,7 @@ def login():
             'message': 'Login successful',
             'username': user.username,
             'cash_balance': user.cash_balance,
-            'is_admin': user.is_admin,  # Return admin flag
+            'is_admin': user.is_admin,
             'global_account': {'cash_balance': user.cash_balance},
             'competition_accounts': competition_accounts,
             'teams': teams
@@ -395,6 +396,7 @@ def create_competition():
     start_date_str = data.get('start_date')
     end_date_str = data.get('end_date')
     featured = data.get('featured', False)
+    max_position_limit = data.get('max_position_limit')  # New field from payload
     user = User.query.filter_by(username=username).first()
     if not user:
         return jsonify({'message': 'User not found'}), 404
@@ -406,8 +408,15 @@ def create_competition():
         code = secrets.token_hex(4)
     start_date = datetime.strptime(start_date_str, "%Y-%m-%d") if start_date_str else None
     end_date = datetime.strptime(end_date_str, "%Y-%m-%d") if end_date_str else None
-    comp = Competition(code=code, name=competition_name, created_by=user.id,
-                       start_date=start_date, end_date=end_date, featured=bool(featured))
+    comp = Competition(
+        code=code, 
+        name=competition_name, 
+        created_by=user.id,
+        start_date=start_date, 
+        end_date=end_date, 
+        featured=bool(featured),
+        max_position_limit=max_position_limit  # Store the max position limit
+    )
     db.session.add(comp)
     db.session.commit()
     return jsonify({'message': 'Competition created successfully', 'competition_code': code})
@@ -740,6 +749,7 @@ def featured_competitions():
             'name': comp.name,
             'start_date': comp.start_date.isoformat() if comp.start_date else None,
             'end_date': comp.end_date.isoformat() if comp.end_date else None,
+            'max_position_limit': comp.max_position_limit
         })
     return jsonify(result)
 
