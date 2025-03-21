@@ -26,6 +26,7 @@ class User(db.Model):
     username = db.Column(db.String(80), unique=True, nullable=False)
     password_hash = db.Column(db.String(128), nullable=False)
     cash_balance = db.Column(db.Float, default=100000)
+    is_admin = db.Column(db.Boolean, default=False)  # New admin flag
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -153,7 +154,7 @@ def login():
                     'name': comp.name,
                     'competition_cash': m.cash_balance,
                     'total_value': m.cash_balance,
-                    'portfolio': []  # To be populated if trades exist.
+                    'portfolio': []  # Populate later if needed.
                 })
         team_memberships = TeamMember.query.filter_by(user_id=user.id).all()
         teams = []
@@ -169,6 +170,7 @@ def login():
             'message': 'Login successful',
             'username': user.username,
             'cash_balance': user.cash_balance,
+            'is_admin': user.is_admin,  # Return admin flag
             'global_account': {'cash_balance': user.cash_balance},
             'competition_accounts': competition_accounts,
             'teams': teams
@@ -396,10 +398,12 @@ def create_competition():
     user = User.query.filter_by(username=username).first()
     if not user:
         return jsonify({'message': 'User not found'}), 404
+    # If attempting to feature the competition, require admin privileges
+    if featured and not user.is_admin:
+        return jsonify({'message': 'Not authorized to feature competition'}), 403
     code = secrets.token_hex(4)
     while Competition.query.filter_by(code=code).first():
         code = secrets.token_hex(4)
-    # Parse dates if provided (expected format: YYYY-MM-DD)
     start_date = datetime.strptime(start_date_str, "%Y-%m-%d") if start_date_str else None
     end_date = datetime.strptime(end_date_str, "%Y-%m-%d") if end_date_str else None
     comp = Competition(code=code, name=competition_name, created_by=user.id,
@@ -726,8 +730,9 @@ def competition_team_sell():
 @app.route('/featured_competitions', methods=['GET'])
 def featured_competitions():
     now = datetime.utcnow()
-    # Return competitions that are featured and start in the future
-    comps = Competition.query.filter(Competition.featured == True, Competition.start_date != None, Competition.start_date > now).all()
+    comps = Competition.query.filter(Competition.featured == True,
+                                     Competition.start_date != None,
+                                     Competition.start_date > now).all()
     result = []
     for comp in comps:
         result.append({
