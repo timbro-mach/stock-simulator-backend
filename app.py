@@ -400,7 +400,6 @@ def create_competition():
     user = User.query.filter_by(username=username).first()
     if not user:
         return jsonify({'message': 'User not found'}), 404
-    # Remove admin-only restriction so anyone can feature a competition
     code = secrets.token_hex(4)
     while Competition.query.filter_by(code=code).first():
         code = secrets.token_hex(4)
@@ -737,9 +736,11 @@ def competition_team_sell():
 @app.route('/featured_competitions', methods=['GET'])
 def featured_competitions():
     now = datetime.utcnow()
-    comps = Competition.query.filter(Competition.featured == True,
-                                     Competition.start_date != None,
-                                     Competition.start_date > now).all()
+    comps = Competition.query.filter(
+        Competition.featured == True,
+        Competition.start_date != None,
+        Competition.start_date > now
+    ).all()
     result = []
     for comp in comps:
         result.append({
