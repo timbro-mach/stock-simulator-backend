@@ -396,13 +396,11 @@ def create_competition():
     start_date_str = data.get('start_date')
     end_date_str = data.get('end_date')
     featured = data.get('featured', False)
-    max_position_limit = data.get('max_position_limit')  # New field from payload
+    max_position_limit = data.get('max_position_limit')
     user = User.query.filter_by(username=username).first()
     if not user:
         return jsonify({'message': 'User not found'}), 404
-    # If attempting to feature the competition, require admin privileges
-    if featured and not user.is_admin:
-        return jsonify({'message': 'Not authorized to feature competition'}), 403
+    # Removed admin-only check for featuring so anyone can feature
     code = secrets.token_hex(4)
     while Competition.query.filter_by(code=code).first():
         code = secrets.token_hex(4)
@@ -415,7 +413,7 @@ def create_competition():
         start_date=start_date, 
         end_date=end_date, 
         featured=bool(featured),
-        max_position_limit=max_position_limit  # Store the max position limit
+        max_position_limit=max_position_limit
     )
     db.session.add(comp)
     db.session.commit()
