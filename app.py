@@ -400,7 +400,7 @@ def create_competition():
     user = User.query.filter_by(username=username).first()
     if not user:
         return jsonify({'message': 'User not found'}), 404
-    # Removed admin-only check for featuring so anyone can feature
+    # Remove admin-only restriction so anyone can feature a competition
     code = secrets.token_hex(4)
     while Competition.query.filter_by(code=code).first():
         code = secrets.token_hex(4)
@@ -795,6 +795,69 @@ def competition_team_leaderboard(code):
         leaderboard.append({'name': team.name, 'total_value': total})
     leaderboard_sorted = sorted(leaderboard, key=lambda x: x['total_value'], reverse=True)
     return jsonify(leaderboard_sorted)
+
+# --------------------
+# Admin Endpoints
+# --------------------
+@app.route('/admin/stats', methods=['GET'])
+def admin_stats():
+    total_users = User.query.count()
+    total_competitions = Competition.query.count()
+    return jsonify({'total_users': total_users, 'total_competitions': total_competitions})
+
+@app.route('/admin/delete_competition', methods=['POST'])
+def admin_delete_competition():
+    data = request.get_json()
+    username = data.get('username')
+    code = data.get('competition_code')
+    
+    admin_user = User.query.filter_by(username=username).first()
+    if not admin_user or not admin_user.is_admin:
+        return jsonify({'message': 'Not authorized'}), 403
+    
+    comp = Competition.query.filter_by(code=code).first()
+    if not comp:
+        return jsonify({'message': 'Competition not found'}), 404
+    
+    db.session.delete(comp)
+    db.session.commit()
+    return jsonify({'message': 'Competition deleted successfully'})
+
+@app.route('/admin/delete_user', methods=['POST'])
+def admin_delete_user():
+    data = request.get_json()
+    admin_username = data.get('username')  # Admin username
+    target_username = data.get('target_username')
+    
+    admin_user = User.query.filter_by(username=admin_username).first()
+    if not admin_user or not admin_user.is_admin:
+        return jsonify({'message': 'Not authorized'}), 403
+
+    target_user = User.query.filter_by(username=target_username).first()
+    if not target_user:
+        return jsonify({'message': 'User not found'}), 404
+
+    db.session.delete(target_user)
+    db.session.commit()
+    return jsonify({'message': 'User deleted successfully'})
+
+@app.route('/admin/unfeature_competition', methods=['POST'])
+def admin_unfeature_competition():
+    data = request.get_json()
+    admin_username = data.get('username')
+    code = data.get('competition_code')
+    
+    admin_user = User.query.filter_by(username=admin_username).first()
+    if not admin_user or not admin_user.is_admin:
+        return jsonify({'message': 'Not authorized'}), 403
+    
+    comp = Competition.query.filter_by(code=code).first()
+    if not comp:
+        return jsonify({'message': 'Competition not found'}), 404
+    
+    comp.featured = False
+    db.session.commit()
+    return jsonify({'message': 'Competition un-featured successfully'})
 
 # --------------------
 # Run the app
