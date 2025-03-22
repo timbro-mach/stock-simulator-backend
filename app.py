@@ -877,6 +877,27 @@ def set_admin():
     db.session.commit()
     return jsonify({'message': f"{username} is now an admin."})
 
+@app.route('/users', methods=['GET'])
+def get_all_users():
+    users = User.query.all()
+    users_data = [{
+        'id': user.id,
+        'username': user.username,
+        'is_admin': user.is_admin,
+        'cash_balance': user.cash_balance
+    } for user in users]
+    return jsonify(users_data)
+
+@app.route('/competitions', methods=['GET'])
+def get_all_competitions():
+    competitions = Competition.query.all()
+    competitions_data = [{
+        'code': comp.code,
+        'name': comp.name,
+        'featured': comp.featured
+    } for comp in competitions]
+    return jsonify(competitions_data)
+
 # --------------------
 # Run the app
 # --------------------
