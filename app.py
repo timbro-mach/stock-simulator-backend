@@ -843,14 +843,10 @@ def admin_delete_user():
     return jsonify({'message': 'User deleted successfully'})
 
 @app.route('/admin/unfeature_competition', methods=['POST'])
-def admin_unfeature_competition():
+def unfeature_competition():
     data = request.get_json()
-    admin_username = data.get('username')
+    # Remove the admin check so any logged-in user can call this.
     code = data.get('competition_code')
-    
-    admin_user = User.query.filter_by(username=admin_username).first()
-    if not admin_user or not admin_user.is_admin:
-        return jsonify({'message': 'Not authorized'}), 403
     
     comp = Competition.query.filter_by(code=code).first()
     if not comp:
@@ -859,6 +855,7 @@ def admin_unfeature_competition():
     comp.featured = False
     db.session.commit()
     return jsonify({'message': 'Competition un-featured successfully'})
+
 
 @app.route('/admin/set_admin', methods=['POST'])
 def set_admin():
