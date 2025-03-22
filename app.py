@@ -209,19 +209,6 @@ def get_user():
             'buy_price': h.buy_price
         })
 
-    # Build and return the complete user response with the is_admin flag
-    return jsonify({
-        'username': user.username,
-        'is_admin': user.is_admin,  # Include admin flag here
-        'global_account': {
-            'cash_balance': user.cash_balance,
-            'portfolio': global_portfolio,
-            'total_value': total_global
-        },
-        # ... include additional data for competition_accounts, team_competitions, etc.
-    })
-
-
     competition_accounts = []
     memberships = CompetitionMember.query.filter_by(user_id=user.id).all()
     for m in memberships:
@@ -287,8 +274,10 @@ def get_user():
                     'team_id': ct.team_id
                 })
 
-    return jsonify({
+    # Build the complete JSON response
+    response_data = {
         'username': user.username,
+        'is_admin': user.is_admin,  # Include admin flag here
         'global_account': {
             'cash_balance': user.cash_balance,
             'portfolio': global_portfolio,
@@ -296,7 +285,9 @@ def get_user():
         },
         'competition_accounts': competition_accounts,
         'team_competitions': team_competitions
-    })
+    }
+    return jsonify(response_data)
+
 
 # --------------------
 # Stock Endpoints
