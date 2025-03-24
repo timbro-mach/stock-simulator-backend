@@ -5,6 +5,7 @@ from flask_sqlalchemy import SQLAlchemy
 import requests, secrets
 from datetime import datetime, timedelta
 import os
+from dateutil import tz
 
 # For scheduling Quick Pics competitions
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -913,34 +914,45 @@ def featured_competitions():
         })
     return jsonify(result)
 
-# --------------------
-# Quick Pics Endpoint & Scheduled Job
-# --------------------
-def create_quick_pics_competition():
+def schedule_quick_pics_for_today():
     with app.app_context():
         now = datetime.utcnow()
-        # Determine the next hour (start at the top of the hour)
-        next_hour = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-        end_time = next_hour + timedelta(hours=1)
-        code = secrets.token_hex(4)
-        quick_comp = Competition(
-            code=code,
-            name="Quick Pics",
-            created_by=1,  # Could be a system admin; adjust as needed
-            start_date=next_hour,
-            end_date=end_time,
-            featured=True,
-            max_position_limit="",
-            is_open=True
-        )
-        db.session.add(quick_comp)
-        db.session.commit()
-        app.logger.info(f"Created Quick Pics competition with code {code} starting at {next_hour}")
+        # Convert 'now' UTC to PST
+        from_zone = tz.gettz('UTC')
+        to_zone = tz.gettz('America/Los_Angeles')
+        utc = now.replace(tzinfo=from_zone)
+        pst_now = utc.astimezone(to_zone)
 
-# Schedule the Quick Pics creation job (every hour at minute 0)
-scheduler = BackgroundScheduler()
-scheduler.add_job(func=create_quick_pics_competition, trigger='cron', minute=0)
-scheduler.start()
+        # If it's Saturday (weekday=5) or Sunday (weekday=6), do nothing
+        if pst_now.weekday() >= 5:
+            app.logger.info("Weekend detected, skipping Quick Pics creation.")
+            return
+
+        # If you only want to schedule them if it's before 1PM, else do next day, you can do logic here
+        # For now, let's assume we always schedule them for *today* if it's a weekday:
+        base_date = pst_now.replace(hour=7, minute=0, second=0, microsecond=0)
+        # For 6 hourly competitions: 7AM, 8AM, 9AM, 10AM, 11AM, 12PM (the last one ends at 1PM)
+        for i in range(6):
+            start_pst = base_date + timedelta(hours=i)
+            end_pst = start_pst + timedelta(hours=1)
+            # Convert back to UTC (no tz info) for storing in the DB
+            start_utc = start_pst.astimezone(from_zone).replace(tzinfo=None)
+            end_utc = end_pst.astimezone(from_zone).replace(tzinfo=None)
+
+            code = secrets.token_hex(4)
+            quick_comp = Competition(
+                code=code,
+                name="Quick Pics",
+                created_by=1,  # system admin
+                start_date=start_utc,
+                end_date=end_utc,
+                featured=True,
+                max_position_limit="",
+                is_open=True
+            )
+            db.session.add(quick_comp)
+            db.session.commit()
+            app.logger.info(f"Created Quick Pics competition {code} from {start_pst} - {end_pst}")
 
 @app.route('/quick_pics', methods=['GET'])
 def quick_pics():
