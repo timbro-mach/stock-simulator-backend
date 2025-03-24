@@ -2,10 +2,12 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_sqlalchemy import SQLAlchemy
-import requests
-import secrets
-from datetime import datetime
+import requests, secrets
+from datetime import datetime, timedelta
 import os
+
+# For scheduling Quick Pics competitions
+from apscheduler.schedulers.background import BackgroundScheduler
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "https://stock-simulator-frontend.vercel.app"}})
@@ -26,7 +28,7 @@ class User(db.Model):
     username = db.Column(db.String(80), unique=True, nullable=False)
     password_hash = db.Column(db.String(128), nullable=False)
     cash_balance = db.Column(db.Float, default=100000)
-    is_admin = db.Column(db.Boolean, default=False)  # New admin flag
+    is_admin = db.Column(db.Boolean, default=False)  # Admin flag
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -46,10 +48,11 @@ class Competition(db.Model):
     name = db.Column(db.String(80), nullable=True)
     created_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    start_date = db.Column(db.DateTime, nullable=True)   # New field
-    end_date = db.Column(db.DateTime, nullable=True)     # New field
-    featured = db.Column(db.Boolean, default=False)      # New field
-    max_position_limit = db.Column(db.String(10), nullable=True)  # New field
+    start_date = db.Column(db.DateTime, nullable=True)
+    end_date = db.Column(db.DateTime, nullable=True)
+    featured = db.Column(db.Boolean, default=False)
+    max_position_limit = db.Column(db.String(10), nullable=True)
+    is_open = db.Column(db.Boolean, default=True)  # True for open; False for restricted
 
 class CompetitionMember(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -274,10 +277,9 @@ def get_user():
                     'team_id': ct.team_id
                 })
 
-    # Build the complete JSON response
     response_data = {
         'username': user.username,
-        'is_admin': user.is_admin,  # Include admin flag here
+        'is_admin': user.is_admin,
         'global_account': {
             'cash_balance': user.cash_balance,
             'portfolio': global_portfolio,
@@ -287,7 +289,6 @@ def get_user():
         'team_competitions': team_competitions
     }
     return jsonify(response_data)
-
 
 # --------------------
 # Stock Endpoints
@@ -401,6 +402,7 @@ def create_competition():
     end_date_str = data.get('end_date')
     featured = data.get('featured', False)
     max_position_limit = data.get('max_position_limit')
+    is_open = data.get('is_open', True)
     user = User.query.filter_by(username=username).first()
     if not user:
         return jsonify({'message': 'User not found'}), 404
@@ -416,7 +418,8 @@ def create_competition():
         start_date=start_date, 
         end_date=end_date, 
         featured=bool(featured),
-        max_position_limit=max_position_limit
+        max_position_limit=max_position_limit,
+        is_open=is_open
     )
     db.session.add(comp)
     db.session.commit()
@@ -735,73 +738,6 @@ def competition_team_sell():
     return jsonify({'message': 'Competition team sell successful', 'competition_team_cash': comp_team.cash_balance})
 
 # --------------------
-# Featured Competitions Endpoint
-# --------------------
-@app.route('/featured_competitions', methods=['GET'])
-def featured_competitions():
-    now = datetime.utcnow()
-    comps = Competition.query.filter(
-        Competition.featured == True,
-        Competition.start_date != None,
-        Competition.start_date > now
-    ).all()
-    result = []
-    for comp in comps:
-        result.append({
-            'code': comp.code,
-            'name': comp.name,
-            'start_date': comp.start_date.isoformat() if comp.start_date else None,
-            'end_date': comp.end_date.isoformat() if comp.end_date else None,
-            'max_position_limit': comp.max_position_limit
-        })
-    return jsonify(result)
-
-# --------------------
-# Unified Competition Leaderboard (Individuals and Teams)
-# --------------------
-@app.route('/competition/<code>/leaderboard', methods=['GET'])
-def competition_leaderboard(code):
-    comp = Competition.query.filter_by(code=code).first()
-    if not comp:
-        return jsonify({'message': 'Competition not found'}), 404
-    leaderboard = []
-    members = CompetitionMember.query.filter_by(competition_id=comp.id).all()
-    for m in members:
-        total = m.cash_balance
-        choldings = CompetitionHolding.query.filter_by(competition_member_id=m.id).all()
-        for h in choldings:
-            try:
-                price = get_current_price(h.symbol)
-            except Exception:
-                price = 0
-            total += price * h.quantity
-        user = db.session.get(User, m.user_id)
-        leaderboard.append({'name': user.username, 'total_value': total})
-    leaderboard_sorted = sorted(leaderboard, key=lambda x: x['total_value'], reverse=True)
-    return jsonify(leaderboard_sorted)
-
-@app.route('/competition/<code>/team_leaderboard', methods=['GET'])
-def competition_team_leaderboard(code):
-    comp = Competition.query.filter_by(code=code).first()
-    if not comp:
-        return jsonify({'message': 'Competition not found'}), 404
-    leaderboard = []
-    comp_teams = CompetitionTeam.query.filter_by(competition_id=comp.id).all()
-    for ct in comp_teams:
-        total = ct.cash_balance
-        tholdings = CompetitionTeamHolding.query.filter_by(competition_team_id=ct.id).all()
-        for h in tholdings:
-            try:
-                price = get_current_price(h.symbol)
-            except Exception:
-                price = 0
-            total += price * h.quantity
-        team = db.session.get(Team, ct.team_id)
-        leaderboard.append({'name': team.name, 'total_value': total})
-    leaderboard_sorted = sorted(leaderboard, key=lambda x: x['total_value'], reverse=True)
-    return jsonify(leaderboard_sorted)
-
-# --------------------
 # Admin Endpoints
 # --------------------
 @app.route('/admin/stats', methods=['GET'])
@@ -849,7 +785,6 @@ def admin_delete_user():
 @app.route('/admin/unfeature_competition', methods=['POST'])
 def unfeature_competition():
     data = request.get_json()
-    # Remove the admin check so any logged-in user can call this.
     code = data.get('competition_code')
     
     comp = Competition.query.filter_by(code=code).first()
@@ -859,7 +794,6 @@ def unfeature_competition():
     comp.featured = False
     db.session.commit()
     return jsonify({'message': 'Competition un-featured successfully'})
-
 
 @app.route('/admin/set_admin', methods=['POST'])
 def set_admin():
@@ -877,8 +811,64 @@ def set_admin():
     db.session.commit()
     return jsonify({'message': f"{username} is now an admin."})
 
+# New endpoints for admin removal actions
+@app.route('/admin/remove_user_from_competition', methods=['POST'])
+def remove_user_from_competition():
+    data = request.get_json()
+    admin_username = data.get('admin_username')
+    target_username = data.get('target_username')
+    competition_code = data.get('competition_code')
+    
+    admin_user = User.query.filter_by(username=admin_username).first()
+    if not admin_user or not admin_user.is_admin:
+        return jsonify({'message': 'Not authorized'}), 403
+
+    target_user = User.query.filter_by(username=target_username).first()
+    if not target_user:
+        return jsonify({'message': 'Target user not found'}), 404
+
+    comp = Competition.query.filter_by(code=competition_code).first()
+    if not comp:
+        return jsonify({'message': 'Competition not found'}), 404
+
+    membership = CompetitionMember.query.filter_by(competition_id=comp.id, user_id=target_user.id).first()
+    if not membership:
+        return jsonify({'message': 'User is not a member of this competition'}), 404
+
+    db.session.delete(membership)
+    db.session.commit()
+    return jsonify({'message': f'{target_username} has been removed from competition {competition_code}.'})
+
+@app.route('/admin/remove_user_from_team', methods=['POST'])
+def remove_user_from_team():
+    data = request.get_json()
+    admin_username = data.get('admin_username')
+    target_username = data.get('target_username')
+    team_id = data.get('team_id')
+    
+    admin_user = User.query.filter_by(username=admin_username).first()
+    if not admin_user or not admin_user.is_admin:
+        return jsonify({'message': 'Not authorized'}), 403
+
+    target_user = User.query.filter_by(username=target_username).first()
+    if not target_user:
+        return jsonify({'message': 'Target user not found'}), 404
+
+    membership = TeamMember.query.filter_by(team_id=team_id, user_id=target_user.id).first()
+    if not membership:
+        return jsonify({'message': 'User is not a member of this team'}), 404
+
+    db.session.delete(membership)
+    db.session.commit()
+    return jsonify({'message': f'{target_username} has been removed from team {team_id}.'})
+
+# Endpoint for admin-only user info (listing all users)
 @app.route('/users', methods=['GET'])
 def get_all_users():
+    admin_username = request.args.get('admin_username')
+    admin_user = User.query.filter_by(username=admin_username).first()
+    if not admin_user or not admin_user.is_admin:
+         return jsonify({'message': 'Not authorized'}), 403
     users = User.query.all()
     users_data = [{
         'id': user.id,
@@ -888,15 +878,133 @@ def get_all_users():
     } for user in users]
     return jsonify(users_data)
 
+# Endpoint for listing all competitions
 @app.route('/competitions', methods=['GET'])
 def get_all_competitions():
     competitions = Competition.query.all()
     competitions_data = [{
         'code': comp.code,
         'name': comp.name,
-        'featured': comp.featured
+        'featured': comp.featured,
+        'is_open': comp.is_open
     } for comp in competitions]
     return jsonify(competitions_data)
+
+# --------------------
+# Featured Competitions Endpoint (updated)
+# --------------------
+@app.route('/featured_competitions', methods=['GET'])
+def featured_competitions():
+    now = datetime.utcnow()
+    comps = Competition.query.filter(
+        Competition.featured == True,
+        Competition.start_date != None,
+        Competition.start_date > now
+    ).all()
+    result = []
+    for comp in comps:
+        join_instructions = "Join directly" if comp.is_open else "Use code to join"
+        result.append({
+            'code': comp.code,
+            'name': comp.name,
+            'join': join_instructions,
+            'start_date': comp.start_date.isoformat() if comp.start_date else None,
+            'end_date': comp.end_date.isoformat() if comp.end_date else None
+        })
+    return jsonify(result)
+
+# --------------------
+# Quick Pics Endpoint & Scheduled Job
+# --------------------
+def create_quick_pics_competition():
+    with app.app_context():
+        now = datetime.utcnow()
+        # Determine the next hour (start at the top of the hour)
+        next_hour = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        end_time = next_hour + timedelta(hours=1)
+        code = secrets.token_hex(4)
+        quick_comp = Competition(
+            code=code,
+            name="Quick Pics",
+            created_by=1,  # Could be a system admin; adjust as needed
+            start_date=next_hour,
+            end_date=end_time,
+            featured=True,
+            max_position_limit="",
+            is_open=True
+        )
+        db.session.add(quick_comp)
+        db.session.commit()
+        app.logger.info(f"Created Quick Pics competition with code {code} starting at {next_hour}")
+
+# Schedule the Quick Pics creation job (every hour at minute 0)
+scheduler = BackgroundScheduler()
+scheduler.add_job(func=create_quick_pics_competition, trigger='cron', minute=0)
+scheduler.start()
+
+@app.route('/quick_pics', methods=['GET'])
+def quick_pics():
+    now = datetime.utcnow()
+    quick_comps = Competition.query.filter(
+        Competition.name == "Quick Pics",
+        Competition.start_date > now
+    ).order_by(Competition.start_date).limit(2).all()
+    result = []
+    for comp in quick_comps:
+        countdown = (comp.start_date - now).total_seconds() if comp.start_date > now else 0
+        result.append({
+            'code': comp.code,
+            'name': comp.name,
+            'start_date': comp.start_date.isoformat(),
+            'end_date': comp.end_date.isoformat(),
+            'countdown': countdown
+        })
+    return jsonify(result)
+
+# --------------------
+# Unified Competition Leaderboard (Individuals and Teams)
+# --------------------
+@app.route('/competition/<code>/leaderboard', methods=['GET'])
+def competition_leaderboard(code):
+    comp = Competition.query.filter_by(code=code).first()
+    if not comp:
+        return jsonify({'message': 'Competition not found'}), 404
+    leaderboard = []
+    members = CompetitionMember.query.filter_by(competition_id=comp.id).all()
+    for m in members:
+        total = m.cash_balance
+        choldings = CompetitionHolding.query.filter_by(competition_member_id=m.id).all()
+        for h in choldings:
+            try:
+                price = get_current_price(h.symbol)
+            except Exception:
+                price = 0
+            total += price * h.quantity
+        user = db.session.get(User, m.user_id)
+        leaderboard.append({'name': user.username, 'total_value': total})
+    leaderboard_sorted = sorted(leaderboard, key=lambda x: x['total_value'], reverse=True)
+    return jsonify(leaderboard_sorted)
+
+@app.route('/competition/<code>/team_leaderboard', methods=['GET'])
+def competition_team_leaderboard(code):
+    comp = Competition.query.filter_by(code=code).first()
+    if not comp:
+        return jsonify({'message': 'Competition not found'}), 404
+    leaderboard = []
+    comp_teams = CompetitionTeam.query.filter_by(competition_id=comp.id).all()
+    for ct in comp_teams:
+        total = ct.cash_balance
+        tholdings = CompetitionTeamHolding.query.filter_by(competition_team_id=ct.id).all()
+        for h in tholdings:
+            try:
+                price = get_current_price(h.symbol)
+            except Exception:
+                price = 0
+            total += price * h.quantity
+        team = db.session.get(Team, ct.team_id)
+        leaderboard.append({'name': team.name, 'total_value': total})
+    leaderboard_sorted = sorted(leaderboard, key=lambda x: x['total_value'], reverse=True)
+    return jsonify(leaderboard_sorted)
 
 # --------------------
 # Run the app
