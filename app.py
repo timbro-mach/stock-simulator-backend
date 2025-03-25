@@ -452,62 +452,111 @@ def competition_buy():
     competition_code = data.get('competition_code')
     symbol = data.get('symbol')
     quantity = int(data.get('quantity'))
+
     user = User.query.filter_by(username=username).first()
     if not user:
         return jsonify({'message': 'User not found'}), 404
+
     comp = Competition.query.filter_by(code=competition_code).first()
     if not comp:
         return jsonify({'message': 'Competition not found'}), 404
+
+    # ---------- NEW: Enforce start/end date ----------
+    from datetime import datetime
+    now = datetime.utcnow()
+
+    # If there's a start_date and we haven't reached it, block trades
+    if comp.start_date and now < comp.start_date:
+        return jsonify({'message': 'Competition has not started yet. No trades allowed.'}), 400
+
+    # If there's an end_date and we've passed it, block trades
+    if comp.end_date and now > comp.end_date:
+        return jsonify({'message': 'Competition has ended. No trades allowed.'}), 400
+    # --------------------------------------------------
+
     member = CompetitionMember.query.filter_by(competition_id=comp.id, user_id=user.id).first()
     if not member:
         return jsonify({'message': 'User is not a member of this competition'}), 404
+
     try:
         price = get_current_price(symbol)
     except Exception as e:
         return jsonify({'message': f'Error fetching price for symbol {symbol}: {str(e)}'}), 400
+
     cost = price * quantity
     if member.cash_balance < cost:
         return jsonify({'message': 'Insufficient funds in competition account'}), 400
+
     member.cash_balance -= cost
     existing_holding = CompetitionHolding.query.filter_by(competition_member_id=member.id, symbol=symbol).first()
     if existing_holding:
         existing_holding.quantity += quantity
     else:
-        new_holding = CompetitionHolding(competition_member_id=member.id, symbol=symbol, quantity=quantity, buy_price=price)
+        new_holding = CompetitionHolding(
+            competition_member_id=member.id,
+            symbol=symbol,
+            quantity=quantity,
+            buy_price=price
+        )
         db.session.add(new_holding)
+
     db.session.commit()
     return jsonify({'message': 'Competition buy successful', 'competition_cash': member.cash_balance})
 
+
 @app.route('/competition/sell', methods=['POST'])
 def competition_sell():
+    from datetime import datetime
+    
     data = request.get_json()
     username = data.get('username')
     competition_code = data.get('competition_code')
     symbol = data.get('symbol')
     quantity = int(data.get('quantity'))
+
+    # 1. Find user
     user = User.query.filter_by(username=username).first()
     if not user:
         return jsonify({'message': 'User not found'}), 404
+
+    # 2. Find competition
     comp = Competition.query.filter_by(code=competition_code).first()
     if not comp:
         return jsonify({'message': 'Competition not found'}), 404
+
+    # 3. Enforce start/end dates
+    now = datetime.utcnow()
+    if comp.start_date and now < comp.start_date:
+        return jsonify({'message': 'Competition has not started yet. No trading allowed.'}), 400
+    if comp.end_date and now > comp.end_date:
+        return jsonify({'message': 'Competition has ended. No trading allowed.'}), 400
+
+    # 4. Check membership
     member = CompetitionMember.query.filter_by(competition_id=comp.id, user_id=user.id).first()
     if not member:
         return jsonify({'message': 'User is not a member of this competition'}), 404
+
+    # 5. Check holding
     holding = CompetitionHolding.query.filter_by(competition_member_id=member.id, symbol=symbol).first()
     if not holding or holding.quantity < quantity:
         return jsonify({'message': 'Not enough shares to sell in competition account'}), 400
+
+    # 6. Fetch current price
     try:
         price = get_current_price(symbol)
     except Exception as e:
         return jsonify({'message': f'Error fetching price for symbol {symbol}: {str(e)}'}), 400
+
+    # 7. Process sell
     proceeds = price * quantity
     holding.quantity -= quantity
     if holding.quantity == 0:
         db.session.delete(holding)
     member.cash_balance += proceeds
     db.session.commit()
+
     return jsonify({'message': 'Competition sell successful', 'competition_cash': member.cash_balance})
+
 
 # --------------------
 # Endpoints for Team (Global Team Account)
@@ -663,80 +712,140 @@ def competition_team_join():
 
 @app.route('/competition/team/buy', methods=['POST'])
 def competition_team_buy():
+    from datetime import datetime
+    
     data = request.get_json()
     username = data.get('username')
     competition_code = data.get('competition_code')
     team_id = data.get('team_id')
     symbol = data.get('symbol')
     quantity = int(data.get('quantity'))
-    
+
+    # 1. Find the user
     user = User.query.filter_by(username=username).first()
     if not user:
         return jsonify({'message': 'User not found'}), 404
 
+    # 2. Find the competition
     comp = Competition.query.filter_by(code=competition_code).first()
     if not comp:
         return jsonify({'message': 'Competition not found'}), 404
 
+    # 3. Enforce start/end dates
+    now = datetime.utcnow()
+    if comp.start_date and now < comp.start_date:
+        return jsonify({'message': 'Competition has not started yet. No trading allowed.'}), 400
+    if comp.end_date and now > comp.end_date:
+        return jsonify({'message': 'Competition has ended. No trading allowed.'}), 400
+
+    # 4. Check if the team is part of this competition
     comp_team = CompetitionTeam.query.filter_by(competition_id=comp.id, team_id=team_id).first()
     if not comp_team:
         return jsonify({'message': 'Team is not part of this competition'}), 404
 
+    # 5. Check user membership on the team
+    if not TeamMember.query.filter_by(team_id=team_id, user_id=user.id).first():
+        return jsonify({'message': 'User is not a member of this team'}), 403
+
+    # 6. Fetch current price
     try:
         price = get_current_price(symbol)
     except Exception as e:
         return jsonify({'message': f'Error fetching price for symbol {symbol}: {str(e)}'}), 400
 
+    # 7. Check funds
     cost = price * quantity
     if comp_team.cash_balance < cost:
         return jsonify({'message': 'Insufficient funds in competition team account'}), 400
 
+    # 8. Deduct funds, update holding
     comp_team.cash_balance -= cost
-    holding = CompetitionTeamHolding.query.filter_by(competition_team_id=comp_team.id, symbol=symbol).first()
+    holding = CompetitionTeamHolding.query.filter_by(
+        competition_team_id=comp_team.id,
+        symbol=symbol
+    ).first()
     if holding:
         holding.quantity += quantity
     else:
-        new_holding = CompetitionTeamHolding(competition_team_id=comp_team.id, symbol=symbol, quantity=quantity, buy_price=price)
+        new_holding = CompetitionTeamHolding(
+            competition_team_id=comp_team.id,
+            symbol=symbol,
+            quantity=quantity,
+            buy_price=price
+        )
         db.session.add(new_holding)
+
     db.session.commit()
-    return jsonify({'message': 'Competition team buy successful', 'competition_team_cash': comp_team.cash_balance})
+    return jsonify({
+        'message': 'Competition team buy successful',
+        'competition_team_cash': comp_team.cash_balance
+    })
+
 
 @app.route('/competition/team/sell', methods=['POST'])
 def competition_team_sell():
+    from datetime import datetime
+    
     data = request.get_json()
     username = data.get('username')
     competition_code = data.get('competition_code')
     team_id = data.get('team_id')
     symbol = data.get('symbol')
     quantity = int(data.get('quantity'))
-    
+
+    # 1. Find the user
     user = User.query.filter_by(username=username).first()
     if not user:
         return jsonify({'message': 'User not found'}), 404
 
+    # 2. Find the competition
     comp = Competition.query.filter_by(code=competition_code).first()
     if not comp:
         return jsonify({'message': 'Competition not found'}), 404
 
+    # 3. Enforce start/end dates
+    now = datetime.utcnow()
+    if comp.start_date and now < comp.start_date:
+        return jsonify({'message': 'Competition has not started yet. No trading allowed.'}), 400
+    if comp.end_date and now > comp.end_date:
+        return jsonify({'message': 'Competition has ended. No trading allowed.'}), 400
+
+    # 4. Check if the team is in this competition
     comp_team = CompetitionTeam.query.filter_by(competition_id=comp.id, team_id=team_id).first()
     if not comp_team:
         return jsonify({'message': 'Team is not part of this competition'}), 404
 
+    # 5. Check user membership on the team
+    if not TeamMember.query.filter_by(team_id=team_id, user_id=user.id).first():
+        return jsonify({'message': 'User is not a member of this team'}), 403
+
+    # 6. Find the team's holding
+    holding = CompetitionTeamHolding.query.filter_by(
+        competition_team_id=comp_team.id,
+        symbol=symbol
+    ).first()
+    if not holding or holding.quantity < quantity:
+        return jsonify({'message': 'Not enough shares to sell in competition team account'}), 400
+
+    # 7. Fetch current price
     try:
         price = get_current_price(symbol)
     except Exception as e:
         return jsonify({'message': f'Error fetching price for symbol {symbol}: {str(e)}'}), 400
 
+    # 8. Update quantity, add proceeds
     proceeds = price * quantity
-    holding = CompetitionTeamHolding.query.filter_by(competition_team_id=comp_team.id, symbol=symbol).first()
-    if not holding or holding.quantity < quantity:
-        return jsonify({'message': 'Not enough shares to sell in competition team account'}), 400
     holding.quantity -= quantity
     if holding.quantity == 0:
         db.session.delete(holding)
     comp_team.cash_balance += proceeds
+
     db.session.commit()
-    return jsonify({'message': 'Competition team sell successful', 'competition_team_cash': comp_team.cash_balance})
+    return jsonify({
+        'message': 'Competition team sell successful',
+        'competition_team_cash': comp_team.cash_balance
+    })
+
 
 # --------------------
 # Admin Endpoints
