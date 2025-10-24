@@ -11,7 +11,10 @@ from dateutil import tz
 from apscheduler.schedulers.background import BackgroundScheduler
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "https://stock-simulator-frontend.vercel.app"}})
+CORS(app, origins=[
+    "https://stock-simulator-frontend.vercel.app",
+    "https://simulator.gostockpro.com"
+])
 
 # Database setup
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///stock_simulator.db'
@@ -159,8 +162,12 @@ def login():
                     'name': comp.name,
                     'competition_cash': m.cash_balance,
                     'total_value': m.cash_balance,
-                    'portfolio': []  # Populate later if needed.
+                    'portfolio': [],  # If you want to populate it later
+                    # NEW: Provide start/end as ISO strings, or None if missing
+                    'start_date': comp.start_date.isoformat() if comp.start_date else None,
+                    'end_date': comp.end_date.isoformat() if comp.end_date else None
                 })
+
         team_memberships = TeamMember.query.filter_by(user_id=user.id).all()
         teams = []
         for tm in team_memberships:
