@@ -10,46 +10,45 @@ from dateutil import tz
 # For scheduling Quick Pics competitions
 from apscheduler.schedulers.background import BackgroundScheduler
 
+import os
+from flask import Flask
+from flask_sqlalchemy import SQLAlchemy
+from flask_cors import CORS
+
+import os
+from flask import Flask
+from flask_sqlalchemy import SQLAlchemy
+from flask_cors import CORS
+
 app = Flask(__name__)
 CORS(app, origins=[
     "https://stock-simulator-frontend.vercel.app",
     "https://simulator.gostockpro.com"
 ])
 
-# --- Force SSL for Render Postgres ---
-raw_db_url = os.getenv("DATABASE_URL")
-if raw_db_url and "sslmode" not in raw_db_url:
-    raw_db_url += "?sslmode=require"
-app.config["SQLALCHEMY_DATABASE_URI"] = raw_db_url
-app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
-    "connect_args": {"sslmode": "require"}
-}
-# -------------------------------------
+# --- Database Configuration ---
+raw_db_url = os.getenv("DATABASE_URL", "").strip()
 
-app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-db = SQLAlchemy(app)
-
-
-# Database setup
-db_url = os.getenv("DATABASE_URL")
-
-if db_url:
-    # Render often needs sslmode=require and correct hostname format
-    if db_url.startswith("postgres://"):
-        db_url = db_url.replace("postgres://", "postgresql://", 1)
-    if "?sslmode=" not in db_url:
-        db_url += "?sslmode=require"
+if not raw_db_url:
+    # fallback for local dev
+    raw_db_url = "sqlite:///local.db"
 else:
-    # Local fallback
-    db_url = "sqlite:///local.db"
+    # ensure sslmode=require is appended only once
+    if "sslmode" not in raw_db_url:
+        if raw_db_url.endswith("/"):
+            raw_db_url = raw_db_url[:-1]
+        raw_db_url += "?sslmode=require"
 
-app.config["SQLALCHEMY_DATABASE_URI"] = db_url
+app.config["SQLALCHEMY_DATABASE_URI"] = raw_db_url
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
-print(f"✅ Connected to database: {db_url}")
-
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
+
+print(f"✅ Connected to database: {app.config['SQLALCHEMY_DATABASE_URI']}")
+# ----------------------------------
+
+# ----------------------------------
+
 
 # Alpha Vantage API Key
 ALPHA_VANTAGE_API_KEY = "2QZ58MHB8CG5PYYJ"
