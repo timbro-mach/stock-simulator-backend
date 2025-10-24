@@ -941,21 +941,6 @@ def unfeature_competition():
     db.session.commit()
     return jsonify({'message': 'Competition un-featured successfully'})
 
-@app.route('/admin/set_admin', methods=['POST'])
-def set_admin():
-    data = request.get_json()
-    secret = data.get('secret')
-    if secret != "Timb3000!":
-        return jsonify({'message': 'Not authorized'}), 403
-
-    username = data.get('username')
-    user = User.query.filter_by(username=username).first()
-    if not user:
-        return jsonify({'message': 'User not found'}), 404
-
-    user.is_admin = True
-    db.session.commit()
-    return jsonify({'message': f"{username} is now an admin."})
 
 # New endpoints for admin removal actions
 @app.route('/admin/remove_user_from_competition', methods=['POST'])
@@ -1163,6 +1148,24 @@ def competition_team_leaderboard(code):
     leaderboard_sorted = sorted(leaderboard, key=lambda x: x['total_value'], reverse=True)
     return jsonify(leaderboard_sorted)
 
+# ✅ Add this ABOVE the "if __name__ == '__main__'" block
+@app.route('/admin/set_admin', methods=['POST'])
+def set_admin():
+    data = request.get_json()
+    secret = data.get('secret')
+    if secret != "Timb3000!":
+        return jsonify({'message': 'Not authorized'}), 403
+
+    username = data.get('username')
+    user = User.query.filter_by(username=username).first()
+    if not user:
+        return jsonify({'message': 'User not found'}), 404
+
+    user.is_admin = True
+    db.session.commit()
+    return jsonify({'message': f"{username} is now an admin."})
+
+
 # --------------------
 # Run the app
 # --------------------
@@ -1170,4 +1173,3 @@ if __name__ == '__main__':
     # Local development only
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port)
-
