@@ -17,7 +17,11 @@ CORS(app, origins=[
 ])
 
 # Database setup
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv("DATABASE_URL")
+db_url = os.getenv("DATABASE_URL")
+if db_url and "sslmode" not in db_url:
+    db_url += "?sslmode=require"
+app.config['SQLALCHEMY_DATABASE_URI'] = db_url or "sqlite:///local.db"
+
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
