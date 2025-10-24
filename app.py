@@ -18,9 +18,22 @@ CORS(app, origins=[
 
 # Database setup
 db_url = os.getenv("DATABASE_URL")
-if db_url and "sslmode" not in db_url:
-    db_url += "?sslmode=require"
-app.config['SQLALCHEMY_DATABASE_URI'] = db_url or "sqlite:///local.db"
+
+if db_url:
+    # Render often needs sslmode=require and correct hostname format
+    if db_url.startswith("postgres://"):
+        db_url = db_url.replace("postgres://", "postgresql://", 1)
+    if "?sslmode=" not in db_url:
+        db_url += "?sslmode=require"
+else:
+    # Local fallback
+    db_url = "sqlite:///local.db"
+
+app.config["SQLALCHEMY_DATABASE_URI"] = db_url
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+
+print(f"✅ Connected to database: {db_url}")
+db = SQLAlchemy(app)
 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
