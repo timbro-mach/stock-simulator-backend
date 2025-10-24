@@ -16,6 +16,20 @@ CORS(app, origins=[
     "https://simulator.gostockpro.com"
 ])
 
+# --- Force SSL for Render Postgres ---
+raw_db_url = os.getenv("DATABASE_URL")
+if raw_db_url and "sslmode" not in raw_db_url:
+    raw_db_url += "?sslmode=require"
+app.config["SQLALCHEMY_DATABASE_URI"] = raw_db_url
+app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
+    "connect_args": {"sslmode": "require"}
+}
+# -------------------------------------
+
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+db = SQLAlchemy(app)
+
+
 # Database setup
 db_url = os.getenv("DATABASE_URL")
 
@@ -33,7 +47,6 @@ app.config["SQLALCHEMY_DATABASE_URI"] = db_url
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
 print(f"✅ Connected to database: {db_url}")
-db = SQLAlchemy(app)
 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
