@@ -352,27 +352,78 @@ def get_stock(symbol):
 
 @app.route('/stock_chart/<symbol>', methods=['GET'])
 def stock_chart(symbol):
+    """
+    Dynamic chart endpoint supporting range queries:
+    /stock_chart/AAPL?range=1D|1W|1M|6M|1Y
+    """
+    range_param = request.args.get("range", "1M").upper()
+
     try:
-        app.logger.info(f"Fetching chart data for {symbol}")
-        url = f"https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol={symbol}&interval=5min&entitlement=realtime&apikey={ALPHA_VANTAGE_API_KEY}"
-        response = requests.get(url)
+        # --- Map range to Alpha Vantage function & limit ---
+        if range_param == "1D":
+            function = "TIME_SERIES_INTRADAY"
+            params = {
+                "function": function,
+                "symbol": symbol,
+                "interval": "5min",
+                "apikey": ALPHA_VANTAGE_API_KEY,
+            }
+            max_points = 78  # ~1 trading day
+
+        elif range_param in ["1W", "1M"]:
+            function = "TIME_SERIES_DAILY_ADJUSTED"
+            params = {"function": function, "symbol": symbol, "apikey": ALPHA_VANTAGE_API_KEY}
+            max_points = 7 if range_param == "1W" else 30
+
+        elif range_param in ["6M", "1Y"]:
+            function = "TIME_SERIES_WEEKLY_ADJUSTED"
+            params = {"function": function, "symbol": symbol, "apikey": ALPHA_VANTAGE_API_KEY}
+            max_points = 26 if range_param == "6M" else 52
+
+        else:
+            # Default fallback: 1M
+            function = "TIME_SERIES_DAILY_ADJUSTED"
+            params = {"function": function, "symbol": symbol, "apikey": ALPHA_VANTAGE_API_KEY}
+            max_points = 30
+
+        # --- Fetch data ---
+        url = "https://www.alphavantage.co/query"
+        response = requests.get(url, params=params, timeout=15)
         if response.status_code != 200:
-            return jsonify({'error': f"Alpha Vantage API error: {response.status_code}"}), 400
+            return jsonify({"error": f"Alpha Vantage API error: {response.status_code}"}), 400
+
         data = response.json()
-        if "Time Series (5min)" not in data:
-            return jsonify({'error': f'No time series data found for symbol {symbol}'}), 404
-        time_series = data["Time Series (5min)"]
+
+        # --- Parse based on function type ---
+        if function == "TIME_SERIES_INTRADAY":
+            ts_key = next((k for k in data.keys() if "Time Series" in k), None)
+        elif function == "TIME_SERIES_DAILY_ADJUSTED":
+            ts_key = "Time Series (Daily)"
+        elif function == "TIME_SERIES_WEEKLY_ADJUSTED":
+            ts_key = "Weekly Adjusted Time Series"
+        else:
+            ts_key = None
+
+        if not ts_key or ts_key not in data:
+            return jsonify({"error": f"No valid data found for symbol {symbol}"}), 404
+
+        time_series = data[ts_key]
+
+        # --- Build chart data ---
         chart_data = []
-        for date_str, data_point in time_series.items():
+        for date_str, data_point in list(time_series.items())[:max_points]:
             chart_data.append({
-                'date': date_str,
-                'close': float(data_point["4. close"])
+                "date": date_str,
+                "close": float(data_point.get("4. close") or data_point.get("5. adjusted close") or 0)
             })
-        chart_data.sort(key=lambda x: x['date'])
+
+        chart_data.sort(key=lambda x: x["date"])
         return jsonify(chart_data)
+
     except Exception as e:
         app.logger.error(f"Error fetching chart data for {symbol}: {e}")
-        return jsonify({'error': f'Failed to fetch chart data for symbol {symbol}: {str(e)}'}), 400
+        return jsonify({"error": f"Failed to fetch chart data for {symbol}: {str(e)}"}), 400
+
 
 # --------------------
 # Global Trading Endpoints
