@@ -59,6 +59,7 @@ ALPHA_VANTAGE_API_KEY = "2QZ58MHB8CG5PYYJ"
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=False)
     password_hash = db.Column(db.String(128), nullable=False)
     cash_balance = db.Column(db.Float, default=100000)
     is_admin = db.Column(db.Boolean, default=False)  # Admin flag
@@ -166,9 +167,12 @@ def register():
     data = request.get_json()
     username = data.get('username')
     password = data.get('password')
+    email = data.get('email')
     if User.query.filter_by(username=username).first():
         return jsonify({'message': 'User already exists'}), 400
-    new_user = User(username=username)
+    if User.query.filter_by(email=email).first():
+        return jsonify({'message': 'Email already in use'}), 400
+    new_user = User(username=username, email=email)
     new_user.set_password(password)
     db.session.add(new_user)
     db.session.commit()
@@ -234,12 +238,15 @@ def get_user():
     holdings = Holding.query.filter_by(user_id=user.id).all()
     global_portfolio = []
     total_global = user.cash_balance
+    global_pnl = 0
     for h in holdings:
         try:
             price = get_current_price(h.symbol)
         except Exception:
             price = 0
         value = price * h.quantity
+        pnl = (price - h.buy_price) * h.quantity
+        global_pnl += pnl
         total_global += value
         global_portfolio.append({
             'symbol': h.symbol,
@@ -257,12 +264,15 @@ def get_user():
             comp_holdings = CompetitionHolding.query.filter_by(competition_member_id=m.id).all()
             comp_portfolio = []
             total_comp_holdings = 0
+            comp_pnl = 0
             for ch in comp_holdings:
                 try:
                     price = get_current_price(ch.symbol)
                 except Exception:
                     price = 0
                 value = price * ch.quantity
+                pnl = (price - ch.buy_price) * ch.quantity
+                comp_pnl += pnl
                 total_comp_holdings += value
                 comp_portfolio.append({
                     'symbol': ch.symbol,
@@ -277,7 +287,8 @@ def get_user():
                 'name': comp.name,
                 'competition_cash': m.cash_balance,
                 'portfolio': comp_portfolio,
-                'total_value': total_comp_value
+                'total_value': total_comp_value,
+                'pnl': comp_pnl
             })
 
     team_memberships = TeamMember.query.filter_by(user_id=user.id).all()
@@ -290,12 +301,15 @@ def get_user():
                 ct_holdings = CompetitionTeamHolding.query.filter_by(competition_team_id=ct.id).all()
                 comp_team_portfolio = []
                 total_holdings = 0
+                team_pnl = 0
                 for cht in ct_holdings:
                     try:
                         price = get_current_price(cht.symbol)
                     except Exception:
                         price = 0
                     value = price * cht.quantity
+                    pnl = (price - cht.buy_price) * cht.quantity
+                    team_pnl += pnl
                     total_holdings += value
                     comp_team_portfolio.append({
                         'symbol': cht.symbol,
@@ -311,7 +325,8 @@ def get_user():
                     'competition_cash': ct.cash_balance,
                     'portfolio': comp_team_portfolio,
                     'total_value': total_value,
-                    'team_id': ct.team_id
+                    'team_id': ct.team_id,
+                    'pnl': team_pnl
                 })
 
     response_data = {
@@ -320,7 +335,8 @@ def get_user():
         'global_account': {
             'cash_balance': user.cash_balance,
             'portfolio': global_portfolio,
-            'total_value': total_global
+            'total_value': total_global,
+            'pnl': global_pnl
         },
         'competition_accounts': competition_accounts,
         'team_competitions': team_competitions
@@ -488,8 +504,8 @@ def create_competition():
     competition_name = data.get('competition_name')
     start_date_str = data.get('start_date')
     end_date_str = data.get('end_date')
-    featured = data.get('featured', False)
     max_position_limit = data.get('max_position_limit')
+    feature_competition = data.get('feature_competition', False)
     is_open = data.get('is_open', True)
     user = User.query.filter_by(username=username).first()
     if not user:
@@ -505,8 +521,8 @@ def create_competition():
         created_by=user.id,
         start_date=start_date, 
         end_date=end_date, 
-        featured=bool(featured),
         max_position_limit=max_position_limit,
+        featured=feature_competition,
         is_open=is_open
     )
     db.session.add(comp)
@@ -517,11 +533,11 @@ def create_competition():
 def join_competition():
     data = request.get_json()
     username = data.get('username')
-    code = data.get('competition_code')
+    competition_code = data.get('competition_code')
     user = User.query.filter_by(username=username).first()
     if not user:
         return jsonify({'message': 'User not found'}), 404
-    comp = Competition.query.filter_by(code=code).first()
+    comp = Competition.query.filter_by(code=competition_code).first()
     if not comp:
         return jsonify({'message': 'Competition not found'}), 404
     existing = CompetitionMember.query.filter_by(competition_id=comp.id, user_id=user.id).first()
@@ -534,6 +550,8 @@ def join_competition():
 
 @app.route('/competition/buy', methods=['POST'])
 def competition_buy():
+    from datetime import datetime
+    
     data = request.get_json()
     username = data.get('username')
     competition_code = data.get('competition_code')
@@ -549,7 +567,6 @@ def competition_buy():
         return jsonify({'message': 'Competition not found'}), 404
 
     # ---------- NEW: Enforce start/end date ----------
-    from datetime import datetime
     now = datetime.utcnow()
 
     # If there's a start_date and we haven't reached it, block trades
@@ -771,13 +788,11 @@ def team_sell():
 def competition_team_join():
     data = request.get_json()
     username = data.get('username')
-    competition_code = data.get('competition_code')
     team_code = data.get('team_code')
-    
+    competition_code = data.get('competition_code')
     user = User.query.filter_by(username=username).first()
     if not user:
         return jsonify({'message': 'User not found'}), 404
-    
     team = Team.query.filter_by(id=team_code).first()
     if not team:
         return jsonify({'message': 'Team not found'}), 404
@@ -791,7 +806,6 @@ def competition_team_join():
     existing = CompetitionTeam.query.filter_by(competition_id=comp.id, team_id=team.id).first()
     if existing:
         return jsonify({'message': 'Team already joined this competition'}), 200
-
     comp_team = CompetitionTeam(competition_id=comp.id, team_id=team.id, cash_balance=100000)
     db.session.add(comp_team)
     db.session.commit()
@@ -991,6 +1005,25 @@ def unfeature_competition():
     comp.featured = False
     db.session.commit()
     return jsonify({'message': 'Competition un-featured successfully'})
+
+@app.route('/admin/update_competition_open', methods=['POST'])
+def admin_update_competition_open():
+    data = request.get_json()
+    admin_username = data.get('admin_username')
+    competition_code = data.get('competition_code')
+    is_open = data.get('is_open')
+    
+    admin_user = User.query.filter_by(username=admin_username).first()
+    if not admin_user or not admin_user.is_admin:
+        return jsonify({'message': 'Not authorized'}), 403
+
+    comp = Competition.query.filter_by(code=competition_code).first()
+    if not comp:
+        return jsonify({'message': 'Competition not found'}), 404
+
+    comp.is_open = is_open
+    db.session.commit()
+    return jsonify({'message': f'Competition {competition_code} open status updated to {is_open}.'})
 
 
 # New endpoints for admin removal actions
