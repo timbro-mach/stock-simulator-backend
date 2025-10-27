@@ -1116,15 +1116,18 @@ def featured_competitions():
         Competition.start_date != None,
         Competition.start_date > now
     ).all()
+
     result = []
     for comp in comps:
         join_instructions = "Join directly" if comp.is_open else "Use code to join"
         result.append({
-            'code': comp.code,
-            'name': comp.name,
-            'join': join_instructions,
-            'start_date': comp.start_date.isoformat() if comp.start_date else None,
-            'end_date': comp.end_date.isoformat() if comp.end_date else None
+            "code": comp.code,
+            "name": comp.name,
+            "join": join_instructions,
+            "start_date": comp.start_date.isoformat() if comp.start_date else None,
+            "end_date": comp.end_date.isoformat() if comp.end_date else None,
+            "is_open": comp.is_open,         # ✅ Add this line
+            "featured": comp.featured         # ✅ Also include for completeness
         })
     return jsonify(result)
 
