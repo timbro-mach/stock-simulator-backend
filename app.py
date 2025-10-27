@@ -59,7 +59,7 @@ ALPHA_VANTAGE_API_KEY = "2QZ58MHB8CG5PYYJ"
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
-    email = db.Column(db.String(120), unique=True, nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=True)
     password_hash = db.Column(db.String(128), nullable=False)
     cash_balance = db.Column(db.Float, default=100000)
     is_admin = db.Column(db.Boolean, default=False)  # Admin flag
