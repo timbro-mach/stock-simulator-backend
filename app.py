@@ -15,11 +15,6 @@ from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
 
-import os
-from flask import Flask
-from flask_sqlalchemy import SQLAlchemy
-from flask_cors import CORS
-
 app = Flask(__name__)
 CORS(app, origins=[
     "https://stock-simulator-frontend.vercel.app",
@@ -993,18 +988,6 @@ def admin_delete_user():
     db.session.commit()
     return jsonify({'message': 'User deleted successfully'})
 
-@app.route('/admin/unfeature_competition', methods=['POST'])
-def unfeature_competition():
-    data = request.get_json()
-    code = data.get('competition_code')
-    
-    comp = Competition.query.filter_by(code=code).first()
-    if not comp:
-        return jsonify({'message': 'Competition not found'}), 404
-    
-    comp.featured = False
-    db.session.commit()
-    return jsonify({'message': 'Competition un-featured successfully'})
 
 @app.route('/admin/update_competition_open', methods=['POST'])
 def admin_update_competition_open():
@@ -1024,6 +1007,7 @@ def admin_update_competition_open():
     comp.is_open = is_open
     db.session.commit()
     return jsonify({'message': f'Competition {competition_code} open status updated to {is_open}.'})
+
 
 
 # New endpoints for admin removal actions
@@ -1129,6 +1113,7 @@ def featured_competitions():
             "featured": comp.featured
         })
     return jsonify(result)
+
 @app.route('/admin/update_featured_status', methods=['POST'])
 def update_featured_status():
     data = request.get_json()
