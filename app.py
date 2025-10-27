@@ -1113,8 +1113,7 @@ def featured_competitions():
     now = datetime.utcnow()
     comps = Competition.query.filter(
         Competition.featured == True,
-        Competition.start_date != None,
-        Competition.start_date > now
+        (Competition.end_date == None) | (Competition.end_date >= now)
     ).all()
 
     result = []
@@ -1126,10 +1125,29 @@ def featured_competitions():
             "join": join_instructions,
             "start_date": comp.start_date.isoformat() if comp.start_date else None,
             "end_date": comp.end_date.isoformat() if comp.end_date else None,
-            "is_open": comp.is_open,         # ✅ Add this line
-            "featured": comp.featured         # ✅ Also include for completeness
+            "is_open": comp.is_open,
+            "featured": comp.featured
         })
     return jsonify(result)
+@app.route('/admin/update_featured_status', methods=['POST'])
+def update_featured_status():
+    data = request.get_json()
+    admin_username = data.get("admin_username")
+    competition_code = data.get("competition_code")
+    feature_competition = data.get("feature_competition", False)
+
+    admin_user = User.query.filter_by(username=admin_username).first()
+    if not admin_user or not admin_user.is_admin:
+        return jsonify({"message": "Not authorized"}), 403
+
+    comp = Competition.query.filter_by(code=competition_code).first()
+    if not comp:
+        return jsonify({"message": "Competition not found"}), 404
+
+    comp.featured = feature_competition
+    db.session.commit()
+    status = "featured" if feature_competition else "unfeatured"
+    return jsonify({"message": f"Competition {competition_code} successfully {status}."})
 
 def schedule_quick_pics_for_today():
     with app.app_context():
