@@ -997,18 +997,39 @@ def admin_delete_competition():
     data = request.get_json()
     username = data.get('username') or data.get('admin_username')
     code = data.get('competition_code')
-    
+
     admin_user = User.query.filter_by(username=username).first()
     if not admin_user or not admin_user.is_admin:
         return jsonify({'message': 'Not authorized'}), 403
-    
+
     comp = Competition.query.filter_by(code=code).first()
     if not comp:
         return jsonify({'message': 'Competition not found'}), 404
-    
-    db.session.delete(comp)
-    db.session.commit()
-    return jsonify({'message': 'Competition deleted successfully'})
+
+    try:
+        # --- Cascade delete dependencies manually ---
+        comp_members = CompetitionMember.query.filter_by(competition_id=comp.id).all()
+        for m in comp_members:
+            CompetitionHolding.query.filter_by(competition_member_id=m.id).delete()
+            db.session.delete(m)
+
+        comp_teams = CompetitionTeam.query.filter_by(competition_id=comp.id).all()
+        for t in comp_teams:
+            CompetitionTeamHolding.query.filter_by(competition_team_id=t.id).delete()
+            db.session.delete(t)
+
+        # --- Finally delete the competition itself ---
+        db.session.delete(comp)
+        db.session.commit()
+
+        app.logger.info(f"✅ Deleted competition {code} and all related data by admin {username}")
+        return jsonify({'message': f'Competition {code} and all related data deleted successfully.'}), 200
+
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error deleting competition {code}: {e}")
+        return jsonify({'message': f'Failed to delete competition: {str(e)}'}), 500
+
 
 @app.route('/admin/delete_user', methods=['POST'])
 def admin_delete_user():
