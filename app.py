@@ -995,7 +995,7 @@ def admin_stats():
 @app.route('/admin/delete_competition', methods=['POST'])
 def admin_delete_competition():
     data = request.get_json()
-    username = data.get('username')
+    username = data.get('username') or data.get('admin_username')
     code = data.get('competition_code')
     
     admin_user = User.query.filter_by(username=username).first()
