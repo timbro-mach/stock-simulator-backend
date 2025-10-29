@@ -1108,25 +1108,23 @@ def admin_delete_competition():
         return jsonify({'message': 'Competition not found'}), 404
 
     try:
-        # --- Delete Individual Members and Holdings ---
+        # --- Delete individual members + their holdings ---
         comp_members = CompetitionMember.query.filter_by(competition_id=comp.id).all()
         for m in comp_members:
             CompetitionHolding.query.filter_by(competition_member_id=m.id).delete()
             db.session.delete(m)
 
-        # --- Delete Team Competitions, Holdings, and Members ---
+        # --- Delete all teams + their team holdings + team members ---
         comp_teams = CompetitionTeam.query.filter_by(competition_id=comp.id).all()
         for t in comp_teams:
-            # Delete all holdings linked to team competition
+            # Delete team holdings
             CompetitionTeamHolding.query.filter_by(competition_team_id=t.id).delete()
-
-            # Also delete any team-member associations if they exist
+            # Delete team members
             TeamMember.query.filter_by(team_id=t.team_id).delete()
-
-            # Finally, delete the team entry
+            # Delete the team itself
             db.session.delete(t)
 
-        # --- Delete the Competition itself ---
+        # --- Finally delete the competition itself ---
         db.session.delete(comp)
         db.session.commit()
 
@@ -1137,7 +1135,6 @@ def admin_delete_competition():
         db.session.rollback()
         app.logger.error(f"Error deleting competition {code}: {e}")
         return jsonify({'message': f'Failed to delete competition: {str(e)}'}), 500
-
 
 
 @app.route('/admin/delete_user', methods=['POST'])
