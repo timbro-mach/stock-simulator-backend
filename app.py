@@ -21,7 +21,8 @@ from flask_cors import CORS
 app = Flask(__name__)
 CORS(app, origins=[
     "https://stock-simulator-frontend.vercel.app",
-    "https://simulator.gostockpro.com"
+    "https://simulator.gostockpro.com",
+    "http://localhost:3000"
 ])
 
 # --- Database Configuration ---
@@ -1107,18 +1108,25 @@ def admin_delete_competition():
         return jsonify({'message': 'Competition not found'}), 404
 
     try:
-        # --- Cascade delete dependencies manually ---
+        # --- Delete Individual Members and Holdings ---
         comp_members = CompetitionMember.query.filter_by(competition_id=comp.id).all()
         for m in comp_members:
             CompetitionHolding.query.filter_by(competition_member_id=m.id).delete()
             db.session.delete(m)
 
+        # --- Delete Team Competitions, Holdings, and Members ---
         comp_teams = CompetitionTeam.query.filter_by(competition_id=comp.id).all()
         for t in comp_teams:
+            # Delete all holdings linked to team competition
             CompetitionTeamHolding.query.filter_by(competition_team_id=t.id).delete()
-            db.session.delete(t)  # delete the team entry itself!
 
-        # --- Finally delete the competition itself ---
+            # Also delete any team-member associations if they exist
+            TeamMember.query.filter_by(team_id=t.team_id).delete()
+
+            # Finally, delete the team entry
+            db.session.delete(t)
+
+        # --- Delete the Competition itself ---
         db.session.delete(comp)
         db.session.commit()
 
@@ -1129,6 +1137,7 @@ def admin_delete_competition():
         db.session.rollback()
         app.logger.error(f"Error deleting competition {code}: {e}")
         return jsonify({'message': f'Failed to delete competition: {str(e)}'}), 500
+
 
 
 @app.route('/admin/delete_user', methods=['POST'])
