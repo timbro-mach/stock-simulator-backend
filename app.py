@@ -1116,7 +1116,7 @@ def admin_delete_competition():
         comp_teams = CompetitionTeam.query.filter_by(competition_id=comp.id).all()
         for t in comp_teams:
             CompetitionTeamHolding.query.filter_by(competition_team_id=t.id).delete()
-            db.session.delete(t)
+            db.session.delete(t)  # delete the team entry itself!
 
         # --- Finally delete the competition itself ---
         db.session.delete(comp)
@@ -1134,7 +1134,7 @@ def admin_delete_competition():
 @app.route('/admin/delete_user', methods=['POST'])
 def admin_delete_user():
     data = request.get_json()
-    admin_username = data.get('username')  # Admin username
+    admin_username = data.get('username') or data.get('admin_username')
     target_username = data.get('target_username')
     
     admin_user = User.query.filter_by(username=admin_username).first()
@@ -1145,9 +1145,35 @@ def admin_delete_user():
     if not target_user:
         return jsonify({'message': 'User not found'}), 404
 
-    db.session.delete(target_user)
-    db.session.commit()
-    return jsonify({'message': 'User deleted successfully'})
+    try:
+        # --- Remove competition memberships and holdings ---
+        memberships = CompetitionMember.query.filter_by(user_id=target_user.id).all()
+        for m in memberships:
+            CompetitionHolding.query.filter_by(competition_member_id=m.id).delete()
+            db.session.delete(m)
+
+        # --- Remove team memberships and team holdings ---
+        team_memberships = TeamMember.query.filter_by(user_id=target_user.id).all()
+        for tm in team_memberships:
+            # Clean up any team holdings associated with the user's teams
+            team_entries = CompetitionTeam.query.filter_by(team_id=tm.team_id).all()
+            for te in team_entries:
+                CompetitionTeamHolding.query.filter_by(competition_team_id=te.id).delete()
+            db.session.delete(tm)
+
+        # --- Finally delete the user record ---
+        db.session.delete(target_user)
+        db.session.commit()
+
+        app.logger.info(f"✅ Deleted user {target_username} and all related data by admin {admin_username}")
+        return jsonify({'message': f'User {target_username} and all related data deleted successfully.'}), 200
+
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error deleting user {target_username}: {e}")
+        return jsonify({'message': f'Failed to delete user: {str(e)}'}), 500
+
+
 
 
 @app.route('/admin/update_competition_open', methods=['POST'])
