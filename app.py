@@ -1173,31 +1173,44 @@ def admin_update_competition_open():
 
 # New endpoints for admin removal actions
 @app.route('/admin/remove_user_from_competition', methods=['POST'])
-def remove_user_from_competition():
+def admin_remove_user_from_competition():
     data = request.get_json()
     admin_username = data.get('admin_username')
     target_username = data.get('target_username')
     competition_code = data.get('competition_code')
     
+    # ✅ Validate admin
     admin_user = User.query.filter_by(username=admin_username).first()
     if not admin_user or not admin_user.is_admin:
         return jsonify({'message': 'Not authorized'}), 403
 
+    # ✅ Find target user
     target_user = User.query.filter_by(username=target_username).first()
     if not target_user:
         return jsonify({'message': 'Target user not found'}), 404
 
+    # ✅ Find competition
     comp = Competition.query.filter_by(code=competition_code).first()
     if not comp:
         return jsonify({'message': 'Competition not found'}), 404
 
-    membership = CompetitionMember.query.filter_by(competition_id=comp.id, user_id=target_user.id).first()
+    # ✅ Find membership
+    membership = CompetitionMember.query.filter_by(
+        competition_id=comp.id,
+        user_id=target_user.id
+    ).first()
     if not membership:
         return jsonify({'message': 'User is not a member of this competition'}), 404
 
+    # ✅ Delete related holdings FIRST (avoid FK constraint violation)
+    CompetitionHolding.query.filter_by(competition_member_id=membership.id).delete()
+
+    # ✅ Then delete the membership itself
     db.session.delete(membership)
     db.session.commit()
-    return jsonify({'message': f'{target_username} has been removed from competition {competition_code}.'})
+
+    return jsonify({'message': f'{target_username} has been removed from competition {competition_code}.'}), 200
+
 
 @app.route('/admin/remove_user_from_team', methods=['POST'])
 def remove_user_from_team():
