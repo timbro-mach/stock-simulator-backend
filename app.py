@@ -638,19 +638,31 @@ def join_competition():
     data = request.get_json()
     username = data.get('username')
     competition_code = data.get('competition_code')
+    access_code = (data.get('access_code') or '').strip()
+
     user = User.query.filter_by(username=username).first()
-    if not user:
-        return jsonify({'message': 'User not found'}), 404
     comp = Competition.query.filter_by(code=competition_code).first()
-    if not comp:
-        return jsonify({'message': 'Competition not found'}), 404
-    existing = CompetitionMember.query.filter_by(competition_id=comp.id, user_id=user.id).first()
+
+    if not user or not comp:
+        return jsonify({"message": "Invalid user or competition."}), 400
+
+    # 🔒 Require code for restricted competitions
+    if not comp.is_open:
+        if not access_code or access_code != comp.code:
+            return jsonify({"message": "Access denied: Invalid or missing competition code."}), 403
+
+    # Prevent duplicate join
+    existing = CompetitionMember.query.filter_by(user_id=user.id, competition_id=comp.id).first()
     if existing:
-        return jsonify({'message': 'User already joined this competition'}), 200
-    new_member = CompetitionMember(competition_id=comp.id, user_id=user.id, cash_balance=100000)
+        return jsonify({"message": "Already joined this competition."}), 400
+
+    # Create new competition member
+    new_member = CompetitionMember(user_id=user.id, competition_id=comp.id, cash_balance=100000)
     db.session.add(new_member)
     db.session.commit()
-    return jsonify({'message': 'Successfully joined competition'})
+
+    return jsonify({"message": f"Successfully joined {comp.name}!"}), 200
+
 
 @app.route('/competition/buy', methods=['POST'])
 def competition_buy():
