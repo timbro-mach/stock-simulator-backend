@@ -4,19 +4,13 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from flask_sqlalchemy import SQLAlchemy
 import requests, secrets
 from datetime import datetime, timedelta
-import os
 from dateutil import tz
 import logging
-logging.basicConfig(level=logging.INFO)
-
-# For scheduling Quick Pics competitions
+import pytz
 from apscheduler.schedulers.background import BackgroundScheduler
-
-
 import os
-from flask import Flask
-from flask_sqlalchemy import SQLAlchemy
-from flask_cors import CORS
+
+logging.basicConfig(level=logging.INFO)
 
 app = Flask(__name__)
 CORS(app, origins=[
@@ -29,10 +23,8 @@ CORS(app, origins=[
 raw_db_url = os.getenv("DATABASE_URL", "").strip()
 
 if not raw_db_url:
-    # fallback for local dev
     raw_db_url = "sqlite:///local.db"
 else:
-    # ensure sslmode=require is appended only once
     if "sslmode" not in raw_db_url:
         if raw_db_url.endswith("/"):
             raw_db_url = raw_db_url[:-1]
@@ -43,11 +35,7 @@ app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
 db = SQLAlchemy(app)
 
-print(f"✅ Connected to database: {app.config['SQLALCHEMY_DATABASE_URI']}")
-# ----------------------------------
-
-# ----------------------------------
-
+print(f"Connected to database: {app.config['SQLALCHEMY_DATABASE_URI']}")
 
 # Alpha Vantage API Key
 ALPHA_VANTAGE_API_KEY = "2QZ58MHB8CG5PYYJ"
@@ -61,7 +49,8 @@ class User(db.Model):
     email = db.Column(db.String(120), unique=True, nullable=True)
     password_hash = db.Column(db.String(128), nullable=False)
     cash_balance = db.Column(db.Float, default=100000)
-    is_admin = db.Column(db.Boolean, default=False)  # Admin flag
+    is_admin = db.Column(db.Boolean, default=False)
+    start_of_day_value = db.Column(db.Float, default=100000.0)
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -84,14 +73,15 @@ class Competition(db.Model):
     start_date = db.Column(db.DateTime, nullable=True)
     end_date = db.Column(db.DateTime, nullable=True)
     featured = db.Column(db.Boolean, default=False)
-    max_position_limit = db.Column(db.String(10), nullable=True)
-    is_open = db.Column(db.Boolean, default=True)  # True for open; False for restricted
+    max_position_limit = db.Column(db.String(10), nullable=True)  # e.g. "20%", "50000"
+    is_open = db.Column(db.Boolean, default=True)
 
 class CompetitionMember(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     competition_id = db.Column(db.Integer, db.ForeignKey('competition.id'), nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     cash_balance = db.Column(db.Float, default=100000)
+    start_of_day_value = db.Column(db.Float, default=100000.0)
     __table_args__ = (db.UniqueConstraint('competition_id', 'user_id', name='_competition_user_uc'),)
 
 class CompetitionHolding(db.Model):
@@ -101,9 +91,6 @@ class CompetitionHolding(db.Model):
     quantity = db.Column(db.Integer, nullable=False)
     buy_price = db.Column(db.Float, nullable=False)
 
-# --------------------
-# New Models for Teams
-# --------------------
 class Team(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(80), nullable=False)
@@ -124,12 +111,12 @@ class TeamHolding(db.Model):
     quantity = db.Column(db.Integer, nullable=False)
     buy_price = db.Column(db.Float, nullable=False)
 
-# Model for teams joining competitions
 class CompetitionTeam(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     competition_id = db.Column(db.Integer, db.ForeignKey('competition.id'), nullable=False)
     team_id = db.Column(db.Integer, db.ForeignKey('team.id'), nullable=False)
     cash_balance = db.Column(db.Float, default=100000)
+    start_of_day_value = db.Column(db.Float, default=100000.0)
     __table_args__ = (db.UniqueConstraint('competition_id', 'team_id', name='_competition_team_uc'),)
 
 class CompetitionTeamHolding(db.Model):
@@ -143,7 +130,7 @@ with app.app_context():
     db.create_all()
 
 # --------------------
-# Helper Function: Fetch current price from Alpha Vantage
+# Helper: Get current price
 # --------------------
 def get_current_price(symbol):
     url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={symbol}&entitlement=realtime&apikey={ALPHA_VANTAGE_API_KEY}"
@@ -159,7 +146,37 @@ def get_current_price(symbol):
     return float(global_quote["05. price"])
 
 # --------------------
-# Endpoints for Registration and Login
+# Helper: Check max position limit
+# --------------------
+def enforce_max_position(member_id, symbol, quantity, price, comp):
+    if not comp.max_position_limit:
+        return True
+    try:
+        limit = comp.max_position_limit.strip()
+        if limit.endswith('%'):
+            pct = float(limit[:-1]) / 100
+            max_value = 100000 * pct
+        else:
+            max_value = float(limit)
+
+        current_value = 0
+        holdings = CompetitionHolding.query.filter_by(competition_member_id=member_id).all()
+        for h in holdings:
+            try:
+                p = get_current_price(h.symbol) if h.symbol != symbol else price
+            except:
+                p = h.buy_price
+            current_value += p * h.quantity
+
+        new_value = current_value + (price * quantity)
+        if new_value > max_value:
+            return False
+        return True
+    except:
+        return False  # Invalid limit → block
+
+# --------------------
+# Registration & Login
 # --------------------
 @app.route('/register', methods=['POST'])
 def register():
@@ -185,109 +202,126 @@ def login():
     user = User.query.filter_by(username=username).first()
 
     if user and user.check_password(password):
+        # --- Global Account ---
+        holdings = Holding.query.filter_by(user_id=user.id).all()
+        global_portfolio = []
+        total_holdings_value = 0
+        global_pnl = 0
+
+        for h in holdings:
+            try:
+                price = get_current_price(h.symbol)
+            except:
+                price = 0
+            value = price * h.quantity
+            pnl = (price - h.buy_price) * h.quantity
+            global_pnl += pnl
+            total_holdings_value += value
+            global_portfolio.append({
+                'symbol': h.symbol, 'quantity': h.quantity, 'current_price': price,
+                'total_value': value, 'buy_price': h.buy_price
+            })
+
+        total_global_value = user.cash_balance + total_holdings_value
+        global_return_pct = (global_pnl / 100000) * 100 if global_pnl else 0
+        daily_pnl_global = total_global_value - (user.start_of_day_value or total_global_value)
+
         # --- Competition Accounts ---
         competition_accounts = []
         memberships = CompetitionMember.query.filter_by(user_id=user.id).all()
         for m in memberships:
             comp = db.session.get(Competition, m.competition_id)
-            if comp:
-                comp_holdings = CompetitionHolding.query.filter_by(competition_member_id=m.id).all()
-                comp_portfolio = []
-                total_holdings_value = 0
-                comp_pnl = 0
+            if not comp: continue
+            comp_holdings = CompetitionHolding.query.filter_by(competition_member_id=m.id).all()
+            comp_portfolio = []
+            total_holdings_value = 0
+            comp_pnl = 0
 
-                for ch in comp_holdings:
-                    try:
-                        price = get_current_price(ch.symbol)
-                    except Exception:
-                        price = 0
-                    value = price * ch.quantity
-                    pnl = (price - ch.buy_price) * ch.quantity
-                    comp_pnl += pnl
-                    total_holdings_value += value
-                    comp_portfolio.append({
-                        "symbol": ch.symbol,
-                        "quantity": ch.quantity,
-                        "current_price": price,
-                        "total_value": value,
-                        "buy_price": ch.buy_price
-                    })
-
-                total_value = m.cash_balance + total_holdings_value
-                total_pnl = total_value - 100000
-                return_pct = (total_pnl / 100000) * 100
-
-                competition_accounts.append({
-                    "code": comp.code,
-                    "name": comp.name,
-                    "cash_balance": m.cash_balance,
-                    "portfolio": comp_portfolio,
-                    "total_value": total_value,
-                    "pnl": total_pnl,
-                    "return_pct": return_pct
+            for ch in comp_holdings:
+                try:
+                    price = get_current_price(ch.symbol)
+                except:
+                    price = 0
+                value = price * ch.quantity
+                pnl = (price - ch.buy_price) * ch.quantity
+                comp_pnl += pnl
+                total_holdings_value += value
+                comp_portfolio.append({
+                    'symbol': ch.symbol, 'quantity': ch.quantity, 'current_price': price,
+                    'total_value': value, 'buy_price': ch.buy_price
                 })
 
+            total_value = m.cash_balance + total_holdings_value
+            total_pnl = total_value - 100000
+            return_pct = (total_pnl / 100000) * 100
+            daily_pnl = total_value - (m.start_of_day_value or total_value)
+
+            competition_accounts.append({
+                'code': comp.code, 'name': comp.name, 'cash_balance': m.cash_balance,
+                'portfolio': comp_portfolio, 'total_value': total_value,
+                'pnl': total_pnl, 'return_pct': return_pct, 'daily_pnl': round(daily_pnl, 2)
+            })
+
         # --- Team Competitions ---
-        team_memberships = TeamMember.query.filter_by(user_id=user.id).all()
         team_competitions = []
+        team_memberships = TeamMember.query.filter_by(user_id=user.id).all()
         for tm in team_memberships:
             ct_entries = CompetitionTeam.query.filter_by(team_id=tm.team_id).all()
             for ct in ct_entries:
                 comp = db.session.get(Competition, ct.competition_id)
-                if comp:
-                    ct_holdings = CompetitionTeamHolding.query.filter_by(competition_team_id=ct.id).all()
-                    team_portfolio = []
-                    total_holdings_value = 0
-                    team_pnl = 0
+                if not comp: continue
+                ct_holdings = CompetitionTeamHolding.query.filter_by(competition_team_id=ct.id).all()
+                team_portfolio = []
+                total_holdings_value = 0
+                team_pnl = 0
 
-                    for cht in ct_holdings:
-                        try:
-                            price = get_current_price(cht.symbol)
-                        except Exception:
-                            price = 0
-                        value = price * cht.quantity
-                        pnl = (price - cht.buy_price) * cht.quantity
-                        team_pnl += pnl
-                        total_holdings_value += value
-                        team_portfolio.append({
-                            "symbol": cht.symbol,
-                            "quantity": cht.quantity,
-                            "current_price": price,
-                            "total_value": value,
-                            "buy_price": cht.buy_price
-                        })
-
-                    total_value = ct.cash_balance + total_holdings_value
-                    total_pnl = total_value - 100000
-                    return_pct = (total_pnl / 100000) * 100
-
-                    team_competitions.append({
-                        "code": comp.code,
-                        "name": comp.name,
-                        "cash_balance": ct.cash_balance,
-                        "portfolio": team_portfolio,
-                        "total_value": total_value,
-                        "pnl": total_pnl,
-                        "return_pct": return_pct,
-                        "team_id": ct.team_id
+                for cht in ct_holdings:
+                    try:
+                        price = get_current_price(cht.symbol)
+                    except:
+                        price = 0
+                    value = price * cht.quantity
+                    pnl = (price - cht.buy_price) * cht.quantity
+                    team_pnl += pnl
+                    total_holdings_value += value
+                    team_portfolio.append({
+                        'symbol': cht.symbol, 'quantity': cht.quantity, 'current_price': price,
+                        'total_value': value, 'buy_price': cht.buy_price
                     })
+
+                total_value = ct.cash_balance + total_holdings_value
+                total_pnl = total_value - 100000
+                return_pct = (total_pnl / 100000) * 100
+                daily_pnl = total_value - (ct.start_of_day_value or total_value)
+
+                team_competitions.append({
+                    'code': comp.code, 'name': comp.name, 'cash_balance': ct.cash_balance,
+                    'portfolio': team_portfolio, 'total_value': total_value,
+                    'pnl': total_pnl, 'return_pct': return_pct, 'team_id': ct.team_id,
+                    'daily_pnl': round(daily_pnl, 2)
+                })
 
         return jsonify({
             'message': 'Login successful',
             'username': user.username,
             'cash_balance': user.cash_balance,
             'is_admin': user.is_admin,
+            'global_account': {
+                'cash_balance': user.cash_balance,
+                'portfolio': global_portfolio,
+                'total_value': total_global_value,
+                'pnl': global_pnl,
+                'return_pct': global_return_pct,
+                'daily_pnl': round(daily_pnl_global, 2)
+            },
             'competition_accounts': competition_accounts,
             'team_competitions': team_competitions
         }), 200
 
-    # --- Invalid credentials ---
-    else:
-        return jsonify({'message': 'Invalid credentials'}), 401
-
+    return jsonify({'message': 'Invalid credentials'}), 401
 
 # --------------------
-# Endpoint for Global User Data (including team competition accounts)
+# User Data
 # --------------------
 @app.route('/user', methods=['GET'])
 def get_user():
@@ -308,127 +342,107 @@ def get_user():
     for h in holdings:
         try:
             price = get_current_price(h.symbol)
-        except Exception:
+        except:
             price = 0
         value = price * h.quantity
         pnl = (price - h.buy_price) * h.quantity
         global_pnl += pnl
         total_holdings_value += value
         global_portfolio.append({
-            'symbol': h.symbol,
-            'quantity': h.quantity,
-            'current_price': price,
-            'total_value': value,
-            'buy_price': h.buy_price
+            'symbol': h.symbol, 'quantity': h.quantity, 'current_price': price,
+            'total_value': value, 'buy_price': h.buy_price
         })
 
     total_global_value = user.cash_balance + total_holdings_value
-    global_return_pct = (global_pnl / 100000) * 100 if global_pnl is not None else 0
+    global_return_pct = (global_pnl / 100000) * 100 if global_pnl else 0
+    daily_pnl_global = total_global_value - (user.start_of_day_value or total_global_value)
 
-    # --- Individual Competition Accounts ---
+    # --- Competition Accounts ---
     competition_accounts = []
     memberships = CompetitionMember.query.filter_by(user_id=user.id).all()
     for m in memberships:
         comp = db.session.get(Competition, m.competition_id)
-        if comp:
-            comp_holdings = CompetitionHolding.query.filter_by(competition_member_id=m.id).all()
-            comp_portfolio = []
-            total_comp_holdings = 0
-            comp_pnl = 0
+        if not comp: continue
+        comp_holdings = CompetitionHolding.query.filter_by(competition_member_id=m.id).all()
+        comp_portfolio = []
+        total_comp_holdings = 0
+        comp_pnl = 0
 
-            for ch in comp_holdings:
-                try:
-                    price = get_current_price(ch.symbol)
-                except Exception:
-                    price = 0
-                value = price * ch.quantity
-                pnl = (price - ch.buy_price) * ch.quantity
-                comp_pnl += pnl
-                total_comp_holdings += value
-                comp_portfolio.append({
-                    'symbol': ch.symbol,
-                    'quantity': ch.quantity,
-                    'current_price': price,
-                    'total_value': value,
-                    'buy_price': ch.buy_price
-                })
-
-            total_comp_value = m.cash_balance + total_comp_holdings
-            total_pnl = total_comp_value - 100000
-            return_pct = (total_pnl / 100000) * 100
-
-            competition_accounts.append({
-                'code': comp.code,
-                'name': comp.name,
-                'cash_balance': m.cash_balance,
-                'portfolio': comp_portfolio,
-                'total_value': total_comp_value,
-                'pnl': total_pnl,
-                'return_pct': return_pct
+        for ch in comp_holdings:
+            try:
+                price = get_current_price(ch.symbol)
+            except:
+                price = 0
+            value = price * ch.quantity
+            pnl = (price - ch.buy_price) * ch.quantity
+            comp_pnl += pnl
+            total_comp_holdings += value
+            comp_portfolio.append({
+                'symbol': ch.symbol, 'quantity': ch.quantity, 'current_price': price,
+                'total_value': value, 'buy_price': ch.buy_price
             })
 
+        total_comp_value = m.cash_balance + total_comp_holdings
+        total_pnl = total_comp_value - 100000
+        return_pct = (total_pnl / 100000) * 100
+        daily_pnl = total_comp_value - (m.start_of_day_value or total_comp_value)
+
+        competition_accounts.append({
+            'code': comp.code, 'name': comp.name, 'cash_balance': m.cash_balance,
+            'portfolio': comp_portfolio, 'total_value': total_comp_value,
+            'pnl': total_pnl, 'return_pct': return_pct, 'daily_pnl': round(daily_pnl, 2)
+        })
+
     # --- Team Competitions ---
-    team_memberships = TeamMember.query.filter_by(user_id=user.id).all()
     team_competitions = []
+    team_memberships = TeamMember.query.filter_by(user_id=user.id).all()
     for tm in team_memberships:
         ct_entries = CompetitionTeam.query.filter_by(team_id=tm.team_id).all()
         for ct in ct_entries:
             comp = db.session.get(Competition, ct.competition_id)
-            if comp:
-                ct_holdings = CompetitionTeamHolding.query.filter_by(competition_team_id=ct.id).all()
-                team_portfolio = []
-                total_holdings_value = 0
-                team_pnl = 0
+            if not comp: continue
+            ct_holdings = CompetitionTeamHolding.query.filter_by(competition_team_id=ct.id).all()
+            team_portfolio = []
+            total_holdings_value = 0
+            team_pnl = 0
 
-                for cht in ct_holdings:
-                    try:
-                        price = get_current_price(cht.symbol)
-                    except Exception:
-                        price = 0
-                    value = price * cht.quantity
-                    pnl = (price - cht.buy_price) * cht.quantity
-                    team_pnl += pnl
-                    total_holdings_value += value
-                    team_portfolio.append({
-                        'symbol': cht.symbol,
-                        'quantity': cht.quantity,
-                        'current_price': price,
-                        'total_value': value,
-                        'buy_price': cht.buy_price
-                    })
-
-                total_value = ct.cash_balance + total_holdings_value
-                total_pnl = total_value - 100000
-                return_pct = (total_pnl / 100000) * 100
-
-                team_competitions.append({
-                    'code': comp.code,
-                    'name': comp.name,
-                    'cash_balance': ct.cash_balance,
-                    'portfolio': team_portfolio,
-                    'total_value': total_value,
-                    'team_id': ct.team_id,
-                    'pnl': total_pnl,
-                    'return_pct': return_pct
+            for cht in ct_holdings:
+                try:
+                    price = get_current_price(cht.symbol)
+                except:
+                    price = 0
+                value = price * cht.quantity
+                pnl = (price - cht.buy_price) * cht.quantity
+                team_pnl += pnl
+                total_holdings_value += value
+                team_portfolio.append({
+                    'symbol': cht.symbol, 'quantity': cht.quantity, 'current_price': price,
+                    'total_value': value, 'buy_price': cht.buy_price
                 })
 
-    # --- Final Response ---
+            total_value = ct.cash_balance + total_holdings_value
+            total_pnl = total_value - 100000
+            return_pct = (total_pnl / 100000) * 100
+            daily_pnl = total_value - (ct.start_of_day_value or total_value)
+
+            team_competitions.append({
+                'code': comp.code, 'name': comp.name, 'cash_balance': ct.cash_balance,
+                'portfolio': team_portfolio, 'total_value': total_value,
+                'team_id': ct.team_id, 'pnl': total_pnl, 'return_pct': return_pct,
+                'daily_pnl': round(daily_pnl, 2)
+            })
+
     response_data = {
-        'username': user.username,
-        'is_admin': user.is_admin,
+        'username': user.username, 'is_admin': user.is_admin,
         'global_account': {
-            'cash_balance': user.cash_balance,
-            'portfolio': global_portfolio,
-            'total_value': total_global_value,
-            'pnl': global_pnl,
-            'return_pct': global_return_pct
+            'cash_balance': user.cash_balance, 'portfolio': global_portfolio,
+            'total_value': total_global_value, 'pnl': global_pnl,
+            'return_pct': global_return_pct, 'daily_pnl': round(daily_pnl_global, 2)
         },
         'competition_accounts': competition_accounts,
         'team_competitions': team_competitions
     }
-
     return jsonify(response_data)
-
 
 # --------------------
 # Stock Endpoints
@@ -436,100 +450,55 @@ def get_user():
 @app.route('/stock/<symbol>', methods=['GET'])
 def get_stock(symbol):
     try:
-        app.logger.info(f"Fetching current price for {symbol}")
-        url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={symbol}&entitlement=realtime&apikey={ALPHA_VANTAGE_API_KEY}"
-        response = requests.get(url)
-        if response.status_code != 200:
-            raise Exception(f"Alpha Vantage API error: {response.status_code}")
-        data = response.json()
-        if "Global Quote" not in data or not data["Global Quote"]:
-            raise Exception(f"No data found for symbol {symbol}")
-        global_quote = data["Global Quote"]
-        if "05. price" not in global_quote:
-            raise Exception(f"No price information available for symbol {symbol}")
-        price = float(global_quote["05. price"])
+        price = get_current_price(symbol)
         return jsonify({'symbol': symbol, 'price': price})
     except Exception as e:
-        app.logger.error(f"Error fetching data for {symbol}: {e}")
-        return jsonify({'error': f'Failed to fetch data for symbol {symbol}: {str(e)}'}), 400
+        return jsonify({'error': str(e)}), 400
 
 @app.route('/stock_chart/<symbol>', methods=['GET'])
 def stock_chart(symbol):
-    """
-    Dynamic chart endpoint supporting range queries:
-    /stock_chart/AAPL?range=1D|1W|1M|6M|1Y
-    """
     range_param = request.args.get("range", "1M").upper()
-
     try:
-        # --- Map range to Alpha Vantage function & limit ---
         if range_param == "1D":
             function = "TIME_SERIES_INTRADAY"
-            params = {
-                "function": function,
-                "symbol": symbol,
-                "interval": "5min",
-                "apikey": ALPHA_VANTAGE_API_KEY,
-            }
-            max_points = 78  # ~1 trading day
-
+            params = {"function": function, "symbol": symbol, "interval": "5min", "apikey": ALPHA_VANTAGE_API_KEY}
+            max_points = 78
         elif range_param in ["1W", "1M"]:
             function = "TIME_SERIES_DAILY_ADJUSTED"
             params = {"function": function, "symbol": symbol, "apikey": ALPHA_VANTAGE_API_KEY}
             max_points = 7 if range_param == "1W" else 30
-
         elif range_param in ["6M", "1Y"]:
             function = "TIME_SERIES_WEEKLY_ADJUSTED"
             params = {"function": function, "symbol": symbol, "apikey": ALPHA_VANTAGE_API_KEY}
             max_points = 26 if range_param == "6M" else 52
-
         else:
-            # Default fallback: 1M
             function = "TIME_SERIES_DAILY_ADJUSTED"
             params = {"function": function, "symbol": symbol, "apikey": ALPHA_VANTAGE_API_KEY}
             max_points = 30
 
-        # --- Fetch data ---
-        url = "https://www.alphavantage.co/query"
-        response = requests.get(url, params=params, timeout=15)
+        response = requests.get("https://www.alphavantage.co/query", params=params, timeout=15)
         if response.status_code != 200:
-            return jsonify({"error": f"Alpha Vantage API error: {response.status_code}"}), 400
-
+            return jsonify({"error": "API error"}), 400
         data = response.json()
 
-        # --- Parse based on function type ---
-        if function == "TIME_SERIES_INTRADAY":
-            ts_key = next((k for k in data.keys() if "Time Series" in k), None)
-        elif function == "TIME_SERIES_DAILY_ADJUSTED":
-            ts_key = "Time Series (Daily)"
-        elif function == "TIME_SERIES_WEEKLY_ADJUSTED":
-            ts_key = "Weekly Adjusted Time Series"
-        else:
-            ts_key = None
-
-        if not ts_key or ts_key not in data:
-            return jsonify({"error": f"No valid data found for symbol {symbol}"}), 404
+        ts_key = "Time Series (5min)" if function == "TIME_SERIES_INTRADAY" else \
+                 "Time Series (Daily)" if function == "TIME_SERIES_DAILY_ADJUSTED" else \
+                 "Weekly Adjusted Time Series"
+        if ts_key not in data:
+            return jsonify({"error": "No data"}), 404
 
         time_series = data[ts_key]
-
-        # --- Build chart data ---
         chart_data = []
-        for date_str, data_point in list(time_series.items())[:max_points]:
-            chart_data.append({
-                "date": date_str,
-                "close": float(data_point.get("4. close") or data_point.get("5. adjusted close") or 0)
-            })
-
+        for date_str, point in list(time_series.items())[:max_points]:
+            close_key = "4. close" if "4. close" in point else "5. adjusted close"
+            chart_data.append({"date": date_str, "close": float(point[close_key])})
         chart_data.sort(key=lambda x: x["date"])
         return jsonify(chart_data)
-
     except Exception as e:
-        app.logger.error(f"Error fetching chart data for {symbol}: {e}")
-        return jsonify({"error": f"Failed to fetch chart data for {symbol}: {str(e)}"}), 400
-
+        return jsonify({"error": str(e)}), 400
 
 # --------------------
-# Global Trading Endpoints
+# Global Trading
 # --------------------
 @app.route('/buy', methods=['POST'])
 def buy_stock():
@@ -540,20 +509,17 @@ def buy_stock():
     try:
         price = get_current_price(symbol)
     except Exception as e:
-        return jsonify({'message': f'Error fetching price for symbol {symbol}: {str(e)}'}), 400
+        return jsonify({'message': f'Error: {str(e)}'}), 400
     cost = quantity * price
     user = User.query.filter_by(username=username).first()
-    if not user:
-        return jsonify({'message': 'User not found'}), 404
-    if user.cash_balance < cost:
+    if not user or user.cash_balance < cost:
         return jsonify({'message': 'Insufficient funds'}), 400
     user.cash_balance -= cost
     existing = Holding.query.filter_by(user_id=user.id, symbol=symbol).first()
     if existing:
         existing.quantity += quantity
     else:
-        new_hold = Holding(user_id=user.id, symbol=symbol, quantity=quantity, buy_price=price)
-        db.session.add(new_hold)
+        db.session.add(Holding(user_id=user.id, symbol=symbol, quantity=quantity, buy_price=price))
     db.session.commit()
     return jsonify({'message': 'Buy successful', 'cash_balance': user.cash_balance})
 
@@ -566,14 +532,14 @@ def sell_stock():
     try:
         price = get_current_price(symbol)
     except Exception as e:
-        return jsonify({'message': f'Error fetching price for symbol {symbol}: {str(e)}'}), 400
+        return jsonify({'message': f'Error: {str(e)}'}), 400
     proceeds = quantity * price
     user = User.query.filter_by(username=username).first()
     if not user:
         return jsonify({'message': 'User not found'}), 404
     holding = Holding.query.filter_by(user_id=user.id, symbol=symbol).first()
     if not holding or holding.quantity < quantity:
-        return jsonify({'message': 'Not enough shares to sell'}), 400
+        return jsonify({'message': 'Not enough shares'}), 400
     holding.quantity -= quantity
     if holding.quantity == 0:
         db.session.delete(holding)
@@ -588,241 +554,182 @@ def reset_global():
     user = User.query.filter_by(username=username).first()
     if not user:
         return jsonify({'message': 'User not found'}), 404
-
-    # Delete all holdings
     Holding.query.filter_by(user_id=user.id).delete()
-
-    # Reset balance
     user.cash_balance = 100000
     db.session.commit()
-
-    return jsonify({'message': 'Global account reset to $100,000 successfully.'}), 200
-
+    return jsonify({'message': 'Reset successful.'}), 200
 
 # --------------------
-# Competition Endpoints (Individual)
+# Competition Endpoints
 # --------------------
 @app.route('/competition/create', methods=['POST'])
 def create_competition():
     data = request.get_json()
     username = data.get('username')
-    competition_name = data.get('competition_name')
-    start_date_str = data.get('start_date')
-    end_date_str = data.get('end_date')
-    max_position_limit = data.get('max_position_limit')
-    feature_competition = data.get('feature_competition', False)
+    name = data.get('competition_name')
+    start = data.get('start_date')
+    end = data.get('end_date')
+    limit = data.get('max_position_limit', '').strip()
+    featured = data.get('feature_competition', False)
     is_open = data.get('is_open', True)
+
     user = User.query.filter_by(username=username).first()
     if not user:
         return jsonify({'message': 'User not found'}), 404
+
     code = secrets.token_hex(4)
     while Competition.query.filter_by(code=code).first():
         code = secrets.token_hex(4)
-    start_date = datetime.strptime(start_date_str, "%Y-%m-%d") if start_date_str else None
-    end_date = datetime.strptime(end_date_str, "%Y-%m-%d") if end_date_str else None
+
+    start_date = datetime.strptime(start, "%Y-%m-%d") if start else None
+    end_date = datetime.strptime(end, "%Y-%m-%d") if end else None
+
     comp = Competition(
-        code=code, 
-        name=competition_name, 
-        created_by=user.id,
-        start_date=start_date, 
-        end_date=end_date, 
-        max_position_limit=max_position_limit,
-        featured=feature_competition,
-        is_open=is_open
+        code=code, name=name, created_by=user.id, start_date=start_date,
+        end_date=end_date, max_position_limit=limit, featured=featured, is_open=is_open
     )
     db.session.add(comp)
     db.session.commit()
-    return jsonify({'message': 'Competition created successfully', 'competition_code': code})
+    return jsonify({'message': 'Created', 'competition_code': code})
 
 @app.route('/competition/join', methods=['POST'])
 def join_competition():
     data = request.get_json()
     username = data.get('username')
-    competition_code = data.get('competition_code')
-    access_code = (data.get('access_code') or '').strip()
+    code = data.get('competition_code')
+    access = (data.get('access_code') or '').strip()
 
     user = User.query.filter_by(username=username).first()
-    comp = Competition.query.filter_by(code=competition_code).first()
-
+    comp = Competition.query.filter_by(code=code).first()
     if not user or not comp:
-        return jsonify({"message": "Invalid user or competition."}), 400
+        return jsonify({"message": "Invalid"}), 400
 
-    # 🔒 Require code for restricted competitions
-    if not comp.is_open:
-        if not access_code or access_code != comp.code:
-            return jsonify({"message": "Access denied: Invalid or missing competition code."}), 403
+    if not comp.is_open and access != comp.code:
+        return jsonify({"message": "Access denied"}), 403
 
-    # Prevent duplicate join
-    existing = CompetitionMember.query.filter_by(user_id=user.id, competition_id=comp.id).first()
-    if existing:
-        return jsonify({"message": "Already joined this competition."}), 400
+    if CompetitionMember.query.filter_by(user_id=user.id, competition_id=comp.id).first():
+        return jsonify({"message": "Already joined"}), 400
 
-    # Create new competition member
-    new_member = CompetitionMember(user_id=user.id, competition_id=comp.id, cash_balance=100000)
-    db.session.add(new_member)
+    db.session.add(CompetitionMember(user_id=user.id, competition_id=comp.id, cash_balance=100000))
     db.session.commit()
-
-    return jsonify({"message": f"Successfully joined {comp.name}!"}), 200
-
+    return jsonify({"message": f"Joined {comp.name}"}), 200
 
 @app.route('/competition/buy', methods=['POST'])
 def competition_buy():
-    from datetime import datetime
-    
     data = request.get_json()
     username = data.get('username')
-    competition_code = data.get('competition_code')
+    code = data.get('competition_code')
     symbol = data.get('symbol')
-    quantity = int(data.get('quantity'))
+    qty = int(data.get('quantity'))
 
     user = User.query.filter_by(username=username).first()
-    if not user:
-        return jsonify({'message': 'User not found'}), 404
+    comp = Competition.query.filter_by(code=code).first()
+    if not user or not comp:
+        return jsonify({'message': 'Not found'}), 404
 
-    comp = Competition.query.filter_by(code=competition_code).first()
-    if not comp:
-        return jsonify({'message': 'Competition not found'}), 404
-
-    # ---------- NEW: Enforce start/end date ----------
     now = datetime.utcnow()
-
-    # If there's a start_date and we haven't reached it, block trades
     if comp.start_date and now < comp.start_date:
-        return jsonify({'message': 'Competition has not started yet. No trades allowed.'}), 400
-
-    # If there's an end_date and we've passed it, block trades
+        return jsonify({'message': 'Not started'}), 400
     if comp.end_date and now > comp.end_date:
-        return jsonify({'message': 'Competition has ended. No trades allowed.'}), 400
-    # --------------------------------------------------
+        return jsonify({'message': 'Ended'}), 400
 
     member = CompetitionMember.query.filter_by(competition_id=comp.id, user_id=user.id).first()
     if not member:
-        return jsonify({'message': 'User is not a member of this competition'}), 404
+        return jsonify({'message': 'Not member'}), 404
 
     try:
         price = get_current_price(symbol)
     except Exception as e:
-        return jsonify({'message': f'Error fetching price for symbol {symbol}: {str(e)}'}), 400
+        return jsonify({'message': str(e)}), 400
 
-    cost = price * quantity
+    cost = price * qty
     if member.cash_balance < cost:
-        return jsonify({'message': 'Insufficient funds in competition account'}), 400
+        return jsonify({'message': 'Insufficient funds'}), 400
+
+    if not enforce_max_position(member.id, symbol, qty, price, comp):
+        return jsonify({'message': 'Max position limit exceeded'}), 400
 
     member.cash_balance -= cost
-    existing_holding = CompetitionHolding.query.filter_by(competition_member_id=member.id, symbol=symbol).first()
-    if existing_holding:
-        existing_holding.quantity += quantity
+    existing = CompetitionHolding.query.filter_by(competition_member_id=member.id, symbol=symbol).first()
+    if existing:
+        existing.quantity += qty
     else:
-        new_holding = CompetitionHolding(
-            competition_member_id=member.id,
-            symbol=symbol,
-            quantity=quantity,
-            buy_price=price
-        )
-        db.session.add(new_holding)
-
+        db.session.add(CompetitionHolding(competition_member_id=member.id, symbol=symbol, quantity=qty, buy_price=price))
     db.session.commit()
-    return jsonify({'message': 'Competition buy successful', 'competition_cash': member.cash_balance})
-
+    return jsonify({'message': 'Buy successful', 'competition_cash': member.cash_balance})
 
 @app.route('/competition/sell', methods=['POST'])
 def competition_sell():
-    from datetime import datetime
-    
     data = request.get_json()
     username = data.get('username')
-    competition_code = data.get('competition_code')
+    code = data.get('competition_code')
     symbol = data.get('symbol')
-    quantity = int(data.get('quantity'))
+    qty = int(data.get('quantity'))
 
-    # 1. Find user
     user = User.query.filter_by(username=username).first()
-    if not user:
-        return jsonify({'message': 'User not found'}), 404
+    comp = Competition.query.filter_by(code=code).first()
+    if not user or not comp:
+        return jsonify({'message': 'Not found'}), 404
 
-    # 2. Find competition
-    comp = Competition.query.filter_by(code=competition_code).first()
-    if not comp:
-        return jsonify({'message': 'Competition not found'}), 404
-
-    # 3. Enforce start/end dates
     now = datetime.utcnow()
     if comp.start_date and now < comp.start_date:
-        return jsonify({'message': 'Competition has not started yet. No trading allowed.'}), 400
+        return jsonify({'message': 'Not started'}), 400
     if comp.end_date and now > comp.end_date:
-        return jsonify({'message': 'Competition has ended. No trading allowed.'}), 400
+        return jsonify({'message': 'Ended'}), 400
 
-    # 4. Check membership
     member = CompetitionMember.query.filter_by(competition_id=comp.id, user_id=user.id).first()
     if not member:
-        return jsonify({'message': 'User is not a member of this competition'}), 404
+        return jsonify({'message': 'Not member'}), 404
 
-    # 5. Check holding
     holding = CompetitionHolding.query.filter_by(competition_member_id=member.id, symbol=symbol).first()
-    if not holding or holding.quantity < quantity:
-        return jsonify({'message': 'Not enough shares to sell in competition account'}), 400
+    if not holding or holding.quantity < qty:
+        return jsonify({'message': 'Not enough shares'}), 400
 
-    # 6. Fetch current price
     try:
         price = get_current_price(symbol)
     except Exception as e:
-        return jsonify({'message': f'Error fetching price for symbol {symbol}: {str(e)}'}), 400
+        return jsonify({'message': str(e)}), 400
 
-    # 7. Process sell
-    proceeds = price * quantity
-    holding.quantity -= quantity
+    proceeds = price * qty
+    holding.quantity -= qty
     if holding.quantity == 0:
         db.session.delete(holding)
     member.cash_balance += proceeds
     db.session.commit()
-
-    return jsonify({'message': 'Competition sell successful', 'competition_cash': member.cash_balance})
-
+    return jsonify({'message': 'Sell successful', 'competition_cash': member.cash_balance})
 
 # --------------------
-# Endpoints for Team (Global Team Account)
+# Team Endpoints
 # --------------------
 @app.route('/team/create', methods=['POST'])
 def create_team():
     data = request.get_json()
     username = data.get('username')
-    team_name = data.get('team_name')
-    
+    name = data.get('team_name')
     user = User.query.filter_by(username=username).first()
     if not user:
         return jsonify({'message': 'User not found'}), 404
-    
-    team = Team(name=team_name, created_by=user.id)
+    team = Team(name=name, created_by=user.id)
     db.session.add(team)
+    db.session.flush()
+    db.session.add(TeamMember(team_id=team.id, user_id=user.id))
     db.session.commit()
-    
-    team_member = TeamMember(team_id=team.id, user_id=user.id)
-    db.session.add(team_member)
-    db.session.commit()
-    
-    return jsonify({'message': 'Team created successfully', 'team_id': team.id, 'team_code': team.id})
+    return jsonify({'message': 'Team created', 'team_id': team.id})
 
 @app.route('/team/join', methods=['POST'])
 def join_team():
     data = request.get_json()
     username = data.get('username')
-    team_code = data.get('team_code')
-    
+    team_id = data.get('team_code')
     user = User.query.filter_by(username=username).first()
-    if not user:
-        return jsonify({'message': 'User not found'}), 404
-    
-    team = Team.query.filter_by(id=team_code).first()
-    if not team:
-        return jsonify({'message': 'Team not found'}), 404
-    
-    if TeamMember.query.filter_by(team_id=team.id, user_id=user.id).first():
-        return jsonify({'message': 'User already in the team'}), 200
-    
-    team_member = TeamMember(team_id=team.id, user_id=user.id)
-    db.session.add(team_member)
+    team = Team.query.get(team_id)
+    if not user or not team:
+        return jsonify({'message': 'Not found'}), 404
+    if TeamMember.query.filter_by(team_id=team_id, user_id=user.id).first():
+        return jsonify({'message': 'Already in team'}), 200
+    db.session.add(TeamMember(team_id=team_id, user_id=user.id))
     db.session.commit()
-    return jsonify({'message': 'Joined team successfully'})
+    return jsonify({'message': 'Joined team'})
 
 @app.route('/team/buy', methods=['POST'])
 def team_buy():
@@ -830,38 +737,26 @@ def team_buy():
     username = data.get('username')
     team_id = data.get('team_id')
     symbol = data.get('symbol')
-    quantity = int(data.get('quantity'))
-    
+    qty = int(data.get('quantity'))
     user = User.query.filter_by(username=username).first()
-    if not user:
-        return jsonify({'message': 'User not found'}), 404
-    
     team = Team.query.get(team_id)
-    if not team:
-        return jsonify({'message': 'Team not found'}), 404
-    
-    if not TeamMember.query.filter_by(team_id=team_id, user_id=user.id).first():
-        return jsonify({'message': 'User is not a member of this team'}), 403
-    
+    if not user or not team or not TeamMember.query.filter_by(team_id=team_id, user_id=user.id).first():
+        return jsonify({'message': 'Invalid'}), 403
     try:
         price = get_current_price(symbol)
     except Exception as e:
-        return jsonify({'message': f'Error fetching price for symbol {symbol}: {str(e)}'}), 400
-    
-    cost = price * quantity
+        return jsonify({'message': str(e)}), 400
+    cost = price * qty
     if team.cash_balance < cost:
-        return jsonify({'message': 'Insufficient team funds'}), 400
-    
+        return jsonify({'message': 'Insufficient funds'}), 400
     team.cash_balance -= cost
-    holding = TeamHolding.query.filter_by(team_id=team_id, symbol=symbol).first()
-    if holding:
-        holding.quantity += quantity
+    h = TeamHolding.query.filter_by(team_id=team_id, symbol=symbol).first()
+    if h:
+        h.quantity += qty
     else:
-        new_holding = TeamHolding(team_id=team_id, symbol=symbol, quantity=quantity, buy_price=price)
-        db.session.add(new_holding)
-    
+        db.session.add(TeamHolding(team_id=team_id, symbol=symbol, quantity=qty, buy_price=price))
     db.session.commit()
-    return jsonify({'message': 'Team buy successful', 'team_cash': team.cash_balance})
+    return jsonify({'message': 'Buy successful', 'team_cash': team.cash_balance})
 
 @app.route('/team/sell', methods=['POST'])
 def team_sell():
@@ -869,604 +764,366 @@ def team_sell():
     username = data.get('username')
     team_id = data.get('team_id')
     symbol = data.get('symbol')
-    quantity = int(data.get('quantity'))
-    
+    qty = int(data.get('quantity'))
     user = User.query.filter_by(username=username).first()
-    if not user:
-        return jsonify({'message': 'User not found'}), 404
-    
     team = Team.query.get(team_id)
-    if not team:
-        return jsonify({'message': 'Team not found'}), 404
-    
-    if not TeamMember.query.filter_by(team_id=team_id, user_id=user.id).first():
-        return jsonify({'message': 'User is not a member of this team'}), 403
-    
+    if not user or not team or not TeamMember.query.filter_by(team_id=team_id, user_id=user.id).first():
+        return jsonify({'message': 'Invalid'}), 403
     try:
         price = get_current_price(symbol)
     except Exception as e:
-        return jsonify({'message': f'Error fetching price for symbol {symbol}: {str(e)}'}), 400
-    
-    proceeds = price * quantity
-    holding = TeamHolding.query.filter_by(team_id=team_id, symbol=symbol).first()
-    if not holding or holding.quantity < quantity:
-        return jsonify({'message': 'Not enough shares to sell'}), 400
-    holding.quantity -= quantity
-    if holding.quantity == 0:
-        db.session.delete(holding)
+        return jsonify({'message': str(e)}), 400
+    h = TeamHolding.query.filter_by(team_id=team_id, symbol=symbol).first()
+    if not h or h.quantity < qty:
+        return jsonify({'message': 'Not enough shares'}), 400
+    proceeds = price * qty
+    h.quantity -= qty
+    if h.quantity == 0:
+        db.session.delete(h)
     team.cash_balance += proceeds
     db.session.commit()
-    return jsonify({'message': 'Team sell successful', 'team_cash': team.cash_balance})
+    return jsonify({'message': 'Sell successful', 'team_cash': team.cash_balance})
 
 # --------------------
-# Endpoints for Competition Team (Teams participating in Competitions)
+# Competition Team
 # --------------------
 @app.route('/competition/team/join', methods=['POST'])
 def competition_team_join():
     data = request.get_json()
     username = data.get('username')
     team_code = data.get('team_code')
-    competition_code = data.get('competition_code')
+    comp_code = data.get('competition_code')
     user = User.query.filter_by(username=username).first()
-    if not user:
-        return jsonify({'message': 'User not found'}), 404
-    team = Team.query.filter_by(id=team_code).first()
-    if not team:
-        return jsonify({'message': 'Team not found'}), 404
-    if not TeamMember.query.filter_by(team_id=team.id, user_id=user.id).first():
-        return jsonify({'message': 'User is not a member of this team'}), 403
-
-    comp = Competition.query.filter_by(code=competition_code).first()
-    if not comp:
-        return jsonify({'message': 'Competition not found'}), 404
-    
-    existing = CompetitionTeam.query.filter_by(competition_id=comp.id, team_id=team.id).first()
-    if existing:
-        return jsonify({'message': 'Team already joined this competition'}), 200
-    comp_team = CompetitionTeam(competition_id=comp.id, team_id=team.id, cash_balance=100000)
-    db.session.add(comp_team)
+    team = Team.query.get(team_code)
+    comp = Competition.query.filter_by(code=comp_code).first()
+    if not user or not team or not comp or not TeamMember.query.filter_by(team_id=team.id, user_id=user.id).first():
+        return jsonify({'message': 'Invalid'}), 400
+    if CompetitionTeam.query.filter_by(competition_id=comp.id, team_id=team.id).first():
+        return jsonify({'message': 'Already joined'}), 200
+    db.session.add(CompetitionTeam(competition_id=comp.id, team_id=team.id, cash_balance=100000))
     db.session.commit()
-    return jsonify({'message': 'Team successfully joined competition'})
+    return jsonify({'message': 'Team joined competition'})
 
 @app.route('/competition/team/buy', methods=['POST'])
 def competition_team_buy():
-    from datetime import datetime
-    
     data = request.get_json()
     username = data.get('username')
-    competition_code = data.get('competition_code')
+    code = data.get('competition_code')
     team_id = data.get('team_id')
     symbol = data.get('symbol')
-    quantity = int(data.get('quantity'))
-
-    # 1. Find the user
+    qty = int(data.get('quantity'))
     user = User.query.filter_by(username=username).first()
-    if not user:
-        return jsonify({'message': 'User not found'}), 404
-
-    # 2. Find the competition
-    comp = Competition.query.filter_by(code=competition_code).first()
-    if not comp:
-        return jsonify({'message': 'Competition not found'}), 404
-
-    # 3. Enforce start/end dates
+    comp = Competition.query.filter_by(code=code).first()
+    ct = CompetitionTeam.query.filter_by(competition_id=comp.id, team_id=team_id).first()
+    if not user or not comp or not ct or not TeamMember.query.filter_by(team_id=team_id, user_id=user.id).first():
+        return jsonify({'message': 'Invalid'}), 400
     now = datetime.utcnow()
-    if comp.start_date and now < comp.start_date:
-        return jsonify({'message': 'Competition has not started yet. No trading allowed.'}), 400
-    if comp.end_date and now > comp.end_date:
-        return jsonify({'message': 'Competition has ended. No trading allowed.'}), 400
-
-    # 4. Check if the team is part of this competition
-    comp_team = CompetitionTeam.query.filter_by(competition_id=comp.id, team_id=team_id).first()
-    if not comp_team:
-        return jsonify({'message': 'Team is not part of this competition'}), 404
-
-    # 5. Check user membership on the team
-    if not TeamMember.query.filter_by(team_id=team_id, user_id=user.id).first():
-        return jsonify({'message': 'User is not a member of this team'}), 403
-
-    # 6. Fetch current price
+    if comp.start_date and now < comp.start_date or comp.end_date and now > comp.end_date:
+        return jsonify({'message': 'Trading not allowed'}), 400
     try:
         price = get_current_price(symbol)
     except Exception as e:
-        return jsonify({'message': f'Error fetching price for symbol {symbol}: {str(e)}'}), 400
-
-    # 7. Check funds
-    cost = price * quantity
-    if comp_team.cash_balance < cost:
-        return jsonify({'message': 'Insufficient funds in competition team account'}), 400
-
-    # 8. Deduct funds, update holding
-    comp_team.cash_balance -= cost
-    holding = CompetitionTeamHolding.query.filter_by(
-        competition_team_id=comp_team.id,
-        symbol=symbol
-    ).first()
-    if holding:
-        holding.quantity += quantity
+        return jsonify({'message': str(e)}), 400
+    cost = price * qty
+    if ct.cash_balance < cost:
+        return jsonify({'message': 'Insufficient funds'}), 400
+    ct.cash_balance -= cost
+    h = CompetitionTeamHolding.query.filter_by(competition_team_id=ct.id, symbol=symbol).first()
+    if h:
+        h.quantity += qty
     else:
-        new_holding = CompetitionTeamHolding(
-            competition_team_id=comp_team.id,
-            symbol=symbol,
-            quantity=quantity,
-            buy_price=price
-        )
-        db.session.add(new_holding)
-
+        db.session.add(CompetitionTeamHolding(competition_team_id=ct.id, symbol=symbol, quantity=qty, buy_price=price))
     db.session.commit()
-    return jsonify({
-        'message': 'Competition team buy successful',
-        'competition_team_cash': comp_team.cash_balance
-    })
-
+    return jsonify({'message': 'Buy successful', 'competition_team_cash': ct.cash_balance})
 
 @app.route('/competition/team/sell', methods=['POST'])
 def competition_team_sell():
-    from datetime import datetime
-    
     data = request.get_json()
     username = data.get('username')
-    competition_code = data.get('competition_code')
+    code = data.get('competition_code')
     team_id = data.get('team_id')
     symbol = data.get('symbol')
-    quantity = int(data.get('quantity'))
-
-    # 1. Find the user
+    qty = int(data.get('quantity'))
     user = User.query.filter_by(username=username).first()
-    if not user:
-        return jsonify({'message': 'User not found'}), 404
-
-    # 2. Find the competition
-    comp = Competition.query.filter_by(code=competition_code).first()
-    if not comp:
-        return jsonify({'message': 'Competition not found'}), 404
-
-    # 3. Enforce start/end dates
+    comp = Competition.query.filter_by(code=code).first()
+    ct = CompetitionTeam.query.filter_by(competition_id=comp.id, team_id=team_id).first()
+    if not user or not comp or not ct or not TeamMember.query.filter_by(team_id=team_id, user_id=user.id).first():
+        return jsonify({'message': 'Invalid'}), 400
     now = datetime.utcnow()
-    if comp.start_date and now < comp.start_date:
-        return jsonify({'message': 'Competition has not started yet. No trading allowed.'}), 400
-    if comp.end_date and now > comp.end_date:
-        return jsonify({'message': 'Competition has ended. No trading allowed.'}), 400
-
-    # 4. Check if the team is in this competition
-    comp_team = CompetitionTeam.query.filter_by(competition_id=comp.id, team_id=team_id).first()
-    if not comp_team:
-        return jsonify({'message': 'Team is not part of this competition'}), 404
-
-    # 5. Check user membership on the team
-    if not TeamMember.query.filter_by(team_id=team_id, user_id=user.id).first():
-        return jsonify({'message': 'User is not a member of this team'}), 403
-
-    # 6. Find the team's holding
-    holding = CompetitionTeamHolding.query.filter_by(
-        competition_team_id=comp_team.id,
-        symbol=symbol
-    ).first()
-    if not holding or holding.quantity < quantity:
-        return jsonify({'message': 'Not enough shares to sell in competition team account'}), 400
-
-    # 7. Fetch current price
+    if comp.start_date and now < comp.start_date or comp.end_date and now > comp.end_date:
+        return jsonify({'message': 'Trading not allowed'}), 400
+    h = CompetitionTeamHolding.query.filter_by(competition_team_id=ct.id, symbol=symbol).first()
+    if not h or h.quantity < qty:
+        return jsonify({'message': 'Not enough shares'}), 400
     try:
         price = get_current_price(symbol)
     except Exception as e:
-        return jsonify({'message': f'Error fetching price for symbol {symbol}: {str(e)}'}), 400
-
-    # 8. Update quantity, add proceeds
-    proceeds = price * quantity
-    holding.quantity -= quantity
-    if holding.quantity == 0:
-        db.session.delete(holding)
-    comp_team.cash_balance += proceeds
-
+        return jsonify({'message': str(e)}), 400
+    proceeds = price * qty
+    h.quantity -= qty
+    if h.quantity == 0:
+        db.session.delete(h)
+    ct.cash_balance += proceeds
     db.session.commit()
-    return jsonify({
-        'message': 'Competition team sell successful',
-        'competition_team_cash': comp_team.cash_balance
-    })
-
+    return jsonify({'message': 'Sell successful', 'competition_team_cash': ct.cash_balance})
 
 # --------------------
 # Admin Endpoints
 # --------------------
 @app.route('/admin/competitions', methods=['GET'])
 def admin_get_competitions():
-    admin_username = request.args.get('admin_username')
-    admin_user = User.query.filter_by(username=admin_username).first()
-    if not admin_user or not admin_user.is_admin:
-        return jsonify({'message': 'Not authorized'}), 403
-
-    competitions = Competition.query.all()
-    data = [{
-        'code': c.code,
-        'name': c.name,
-        'start_date': c.start_date.isoformat() if c.start_date else None,
-        'end_date': c.end_date.isoformat() if c.end_date else None,
-        'featured': c.featured,
-        'is_open': c.is_open
-    } for c in competitions]
-    return jsonify(data)
-
+    admin = User.query.filter_by(username=request.args.get('admin_username')).first()
+    if not admin or not admin.is_admin:
+        return jsonify({'message': 'Unauthorized'}), 403
+    comps = Competition.query.all()
+    return jsonify([{
+        'code': c.code, 'name': c.name, 'start_date': c.start_date.isoformat() if c.start_date else None,
+        'end_date': c.end_date.isoformat() if c.end_date else None, 'featured': c.featured, 'is_open': c.is_open
+    } for c in comps])
 
 @app.route('/admin/stats', methods=['GET'])
 def admin_stats():
-    total_users = User.query.count()
-    total_competitions = Competition.query.count()
-    return jsonify({'total_users': total_users, 'total_competitions': total_competitions})
+    return jsonify({'total_users': User.query.count(), 'total_competitions': Competition.query.count()})
 
 @app.route('/admin/delete_competition', methods=['POST'])
 def admin_delete_competition():
     data = request.get_json()
-    username = data.get('username') or data.get('admin_username')
-    code = data.get('competition_code')
-
-    admin_user = User.query.filter_by(username=username).first()
-    if not admin_user or not admin_user.is_admin:
-        return jsonify({'message': 'Not authorized'}), 403
-
-    comp = Competition.query.filter_by(code=code).first()
+    admin = User.query.filter_by(username=data.get('admin_username')).first()
+    if not admin or not admin.is_admin:
+        return jsonify({'message': 'Unauthorized'}), 403
+    comp = Competition.query.filter_by(code=data.get('competition_code')).first()
     if not comp:
-        return jsonify({'message': 'Competition not found'}), 404
-
+        return jsonify({'message': 'Not found'}), 404
     try:
-        # --- Remove all related members & holdings ---
         CompetitionHolding.query.filter(
             CompetitionHolding.competition_member_id.in_(
                 db.session.query(CompetitionMember.id).filter_by(competition_id=comp.id)
             )
         ).delete(synchronize_session=False)
-
-        CompetitionMember.query.filter_by(competition_id=comp.id).delete(synchronize_session=False)
-
-        # --- Remove all related team holdings & team members ---
+        CompetitionMember.query.filter_by(competition_id=comp.id).delete()
         CompetitionTeamHolding.query.filter(
             CompetitionTeamHolding.competition_team_id.in_(
                 db.session.query(CompetitionTeam.id).filter_by(competition_id=comp.id)
             )
         ).delete(synchronize_session=False)
-
-        TeamMember.query.filter(
-            TeamMember.team_id.in_(
-                db.session.query(CompetitionTeam.team_id).filter_by(competition_id=comp.id)
-            )
-        ).delete(synchronize_session=False)
-
-        CompetitionTeam.query.filter_by(competition_id=comp.id).delete(synchronize_session=False)
-
-        # --- Delete the competition itself ---
+        CompetitionTeam.query.filter_by(competition_id=comp.id).delete()
         db.session.delete(comp)
         db.session.commit()
-
-        return jsonify({'message': f'Competition {code} deleted successfully.'}), 200
-
+        return jsonify({'message': 'Deleted'}), 200
     except Exception as e:
         db.session.rollback()
-        app.logger.error(f"❌ Error deleting competition {code}: {e}")
-        return jsonify({'message': f'Failed to delete competition: {str(e)}'}), 500
-
-
+        return jsonify({'message': str(e)}), 500
 
 @app.route('/admin/delete_user', methods=['POST'])
 def admin_delete_user():
     data = request.get_json()
-    admin_username = data.get('username')
-    target_username = data.get('target_username')
-
-    admin_user = User.query.filter_by(username=admin_username).first()
-    if not admin_user or not admin_user.is_admin:
-        return jsonify({'message': 'Not authorized'}), 403
-
-    target_user = User.query.filter_by(username=target_username).first()
-    if not target_user:
-        return jsonify({'message': 'User not found'}), 404
-
+    admin = User.query.filter_by(username=data.get('admin_username')).first()
+    target = User.query.filter_by(username=data.get('target_username')).first()
+    if not admin or not admin.is_admin or not target:
+        return jsonify({'message': 'Invalid'}), 400
     try:
-        # --- Delete user's holdings and memberships ---
         CompetitionHolding.query.filter(
             CompetitionHolding.competition_member_id.in_(
-                db.session.query(CompetitionMember.id).filter_by(user_id=target_user.id)
+                db.session.query(CompetitionMember.id).filter_by(user_id=target.id)
             )
         ).delete(synchronize_session=False)
-
-        CompetitionMember.query.filter_by(user_id=target_user.id).delete(synchronize_session=False)
-
-        # --- Remove from any teams ---
-        TeamMember.query.filter_by(user_id=target_user.id).delete(synchronize_session=False)
-
-        # --- Finally delete user ---
-        db.session.delete(target_user)
+        CompetitionMember.query.filter_by(user_id=target.id).delete()
+        TeamMember.query.filter_by(user_id=target.id).delete()
+        db.session.delete(target)
         db.session.commit()
-
-        return jsonify({'message': f'User {target_username} deleted successfully.'}), 200
-
+        return jsonify({'message': 'User deleted'}), 200
     except Exception as e:
         db.session.rollback()
-        app.logger.error(f"❌ Error deleting user {target_username}: {e}")
-        return jsonify({'message': f'Failed to delete user: {str(e)}'}), 500
-
-
+        return jsonify({'message': str(e)}), 500
 
 @app.route('/admin/update_competition_open', methods=['POST'])
 def admin_update_competition_open():
     data = request.get_json()
-    admin_username = data.get('admin_username')
-    competition_code = data.get('competition_code')
-    is_open = data.get('is_open')
-    
-    admin_user = User.query.filter_by(username=admin_username).first()
-    if not admin_user or not admin_user.is_admin:
-        return jsonify({'message': 'Not authorized'}), 403
-
-    comp = Competition.query.filter_by(code=competition_code).first()
-    if not comp:
-        return jsonify({'message': 'Competition not found'}), 404
-
-    comp.is_open = is_open
+    admin = User.query.filter_by(username=data.get('admin_username')).first()
+    comp = Competition.query.filter_by(code=data.get('competition_code')).first()
+    if not admin or not admin.is_admin or not comp:
+        return jsonify({'message': 'Invalid'}), 400
+    comp.is_open = data.get('is_open')
     db.session.commit()
-    return jsonify({'message': f'Competition {competition_code} open status updated to {is_open}.'})
+    return jsonify({'message': 'Updated'})
 
-
-
-# New endpoints for admin removal actions
 @app.route('/admin/remove_user_from_competition', methods=['POST'])
 def admin_remove_user_from_competition():
     data = request.get_json()
-    admin_username = data.get('admin_username')
-    target_username = data.get('target_username')
-    competition_code = data.get('competition_code')
-    
-    # ✅ Validate admin
-    admin_user = User.query.filter_by(username=admin_username).first()
-    if not admin_user or not admin_user.is_admin:
-        return jsonify({'message': 'Not authorized'}), 403
-
-    # ✅ Find target user
-    target_user = User.query.filter_by(username=target_username).first()
-    if not target_user:
-        return jsonify({'message': 'Target user not found'}), 404
-
-    # ✅ Find competition
-    comp = Competition.query.filter_by(code=competition_code).first()
-    if not comp:
-        return jsonify({'message': 'Competition not found'}), 404
-
-    # ✅ Find membership
-    membership = CompetitionMember.query.filter_by(
-        competition_id=comp.id,
-        user_id=target_user.id
-    ).first()
-    if not membership:
-        return jsonify({'message': 'User is not a member of this competition'}), 404
-
-    # ✅ Delete related holdings FIRST (avoid FK constraint violation)
-    CompetitionHolding.query.filter_by(competition_member_id=membership.id).delete()
-
-    # ✅ Then delete the membership itself
-    db.session.delete(membership)
+    admin = User.query.filter_by(username=data.get('admin_username')).first()
+    target = User.query.filter_by(username=data.get('target_username')).first()
+    comp = Competition.query.filter_by(code=data.get('competition_code')).first()
+    if not admin or not admin.is_admin or not target or not comp:
+        return jsonify({'message': 'Invalid'}), 400
+    member = CompetitionMember.query.filter_by(competition_id=comp.id, user_id=target.id).first()
+    if not member:
+        return jsonify({'message': 'Not in competition'}), 404
+    CompetitionHolding.query.filter_by(competition_member_id=member.id).delete()
+    db.session.delete(member)
     db.session.commit()
-
-    return jsonify({'message': f'{target_username} has been removed from competition {competition_code}.'}), 200
-
+    return jsonify({'message': 'Removed from competition'}), 200
 
 @app.route('/admin/remove_user_from_team', methods=['POST'])
-def remove_user_from_team():
+def admin_remove_user_from_team():
     data = request.get_json()
-    admin_username = data.get('admin_username')
-    target_username = data.get('target_username')
-    team_id = data.get('team_id')
-    
-    admin_user = User.query.filter_by(username=admin_username).first()
-    if not admin_user or not admin_user.is_admin:
-        return jsonify({'message': 'Not authorized'}), 403
-
-    target_user = User.query.filter_by(username=target_username).first()
-    if not target_user:
-        return jsonify({'message': 'Target user not found'}), 404
-
-    membership = TeamMember.query.filter_by(team_id=team_id, user_id=target_user.id).first()
-    if not membership:
-        return jsonify({'message': 'User is not a member of this team'}), 404
-
-    db.session.delete(membership)
+    admin = User.query.filter_by(username=data.get('admin_username')).first()
+    target = User.query.filter_by(username=data.get('target_username')).first()
+    if not admin or not admin.is_admin or not target:
+        return jsonify({'message': 'Invalid'}), 400
+    member = TeamMember.query.filter_by(team_id=data.get('team_id'), user_id=target.id).first()
+    if not member:
+        return jsonify({'message': 'Not in team'}), 404
+    db.session.delete(member)
     db.session.commit()
-    return jsonify({'message': f'{target_username} has been removed from team {team_id}.'})
+    return jsonify({'message': 'Removed from team'}), 200
 
-# Endpoint for admin-only user info (listing all users)
 @app.route('/users', methods=['GET'])
 def get_all_users():
-    admin_username = request.args.get('admin_username')
-    admin_user = User.query.filter_by(username=admin_username).first()
-    if not admin_user or not admin_user.is_admin:
-         return jsonify({'message': 'Not authorized'}), 403
-    users = User.query.all()
-    users_data = [{
-        'id': user.id,
-        'username': user.username,
-        'is_admin': user.is_admin,
-        'cash_balance': user.cash_balance
-    } for user in users]
-    return jsonify(users_data)
+    admin = User.query.filter_by(username=request.args.get('admin_username')).first()
+    if not admin or not admin.is_admin:
+        return jsonify({'message': 'Unauthorized'}), 403
+    return jsonify([{'id': u.id, 'username': u.username, 'is_admin': u.is_admin, 'cash_balance': u.cash_balance} for u in User.query.all()])
 
-# Endpoint for listing all competitions
 @app.route('/competitions', methods=['GET'])
 def get_all_competitions():
-    competitions = Competition.query.all()
-    competitions_data = [{
-        'code': comp.code,
-        'name': comp.name,
-        'featured': comp.featured,
-        'is_open': comp.is_open
-    } for comp in competitions]
-    return jsonify(competitions_data)
+    return jsonify([{'code': c.code, 'name': c.name, 'featured': c.featured, 'is_open': c.is_open} for c in Competition.query.all()])
 
-# --------------------
-# Featured Competitions Endpoint (updated)
-# --------------------
 @app.route('/featured_competitions', methods=['GET'])
 def get_featured_competitions():
-    try:
-        featured = Competition.query.filter_by(featured=True).all()
-        result = []
-        for comp in featured:
-            if comp.end_date is None or comp.end_date >= datetime.utcnow():
-                result.append({
-                    'code': comp.code,
-                    'name': comp.name,
-                    'start_date': comp.start_date.isoformat(),
-                    'end_date': comp.end_date.isoformat() if comp.end_date else None,
-                    'is_open': comp.is_open
-                })
-        app.logger.info(f"Returning {len(result)} featured competitions")
-        return jsonify(result), 200
-    except Exception as e:
-        app.logger.error(f"Error in /featured_competitions: {str(e)}")
-        return jsonify({"error": "Internal server error"}), 500
-    
+    now = datetime.utcnow()
+    comps = Competition.query.filter_by(featured=True).all()
+    result = []
+    for c in comps:
+        if not c.end_date or c.end_date >= now:
+            result.append({
+                'code': c.code, 'name': c.name,
+                'start_date': c.start_date.isoformat() if c.start_date else None,
+                'end_date': c.end_date.isoformat() if c.end_date else None,
+                'is_open': c.is_open
+            })
+    return jsonify(result), 200
+
 @app.route('/admin/update_featured_status', methods=['POST'])
 def update_featured_status():
     data = request.get_json()
-    admin_username = data.get("admin_username")
-    competition_code = data.get("competition_code")
-    feature_competition = data.get("feature_competition", False)
-
-    admin_user = User.query.filter_by(username=admin_username).first()
-    if not admin_user or not admin_user.is_admin:
-        return jsonify({"message": "Not authorized"}), 403
-
-    comp = Competition.query.filter_by(code=competition_code).first()
-    if not comp:
-        return jsonify({"message": "Competition not found"}), 404
-
-    comp.featured = feature_competition
+    admin = User.query.filter_by(username=data.get('admin_username')).first()
+    comp = Competition.query.filter_by(code=data.get('competition_code')).first()
+    if not admin or not admin.is_admin or not comp:
+        return jsonify({'message': 'Invalid'}), 400
+    comp.featured = data.get('feature_competition', False)
     db.session.commit()
-    status = "featured" if feature_competition else "unfeatured"
-    return jsonify({"message": f"Competition {competition_code} successfully {status}."})
+    return jsonify({'message': 'Updated'})
 
-def schedule_quick_pics_for_today():
+# --------------------
+# Daily P&L Reset
+# --------------------
+def reset_daily_pnl_at_open():
     with app.app_context():
-        now = datetime.utcnow()
-        # Convert 'now' UTC to PST
-        from_zone = tz.gettz('UTC')
-        to_zone = tz.gettz('America/Los_Angeles')
-        utc = now.replace(tzinfo=from_zone)
-        pst_now = utc.astimezone(to_zone)
-
-        # If it's Saturday (weekday=5) or Sunday (weekday=6), do nothing
-        if pst_now.weekday() >= 5:
-            app.logger.info("Weekend detected, skipping Quick Pics creation.")
+        pst = pytz.timezone('America/Los_Angeles')
+        now = datetime.now(pst)
+        if now.weekday() >= 5 or now.hour != 6 or now.minute < 35:
             return
 
-        # If you only want to schedule them if it's before 1PM, else do next day, you can do logic here
-        # For now, let's assume we always schedule them for *today* if it's a weekday:
-        base_date = pst_now.replace(hour=7, minute=0, second=0, microsecond=0)
-        # For 6 hourly competitions: 7AM, 8AM, 9AM, 10AM, 11AM, 12PM (the last one ends at 1PM)
-        for i in range(6):
-            start_pst = base_date + timedelta(hours=i)
-            end_pst = start_pst + timedelta(hours=1)
-            # Convert back to UTC (no tz info) for storing in the DB
-            start_utc = start_pst.astimezone(from_zone).replace(tzinfo=None)
-            end_utc = end_pst.astimezone(from_zone).replace(tzinfo=None)
+        for user in User.query.all():
+            value = user.cash_balance
+            for h in Holding.query.filter_by(user_id=user.id).all():
+                try:
+                    price = get_current_price(h.symbol)
+                except:
+                    price = h.buy_price
+                value += price * h.quantity
+            user.start_of_day_value = value
+            db.session.add(user)
 
-            code = secrets.token_hex(4)
-            quick_comp = Competition(
-                code=code,
-                name="Quick Pics",
-                created_by=1,  # system admin
-                start_date=start_utc,
-                end_date=end_utc,
-                featured=True,
-                max_position_limit="",
-                is_open=True
-            )
-            db.session.add(quick_comp)
-            db.session.commit()
-            app.logger.info(f"Created Quick Pics competition {code} from {start_pst} - {end_pst}")
+        for m in CompetitionMember.query.all():
+            value = m.cash_balance
+            for h in CompetitionHolding.query.filter_by(competition_member_id=m.id).all():
+                try:
+                    price = get_current_price(h.symbol)
+                except:
+                    price = h.buy_price
+                value += price * h.quantity
+            m.start_of_day_value = value
+            db.session.add(m)
+
+        for ct in CompetitionTeam.query.all():
+            value = ct.cash_balance
+            for h in CompetitionTeamHolding.query.filter_by(competition_team_id=ct.id).all():
+                try:
+                    price = get_current_price(h.symbol)
+                except:
+                    price = h.buy_price
+                value += price * h.quantity
+            ct.start_of_day_value = value
+            db.session.add(ct)
+
+        db.session.commit()
+        app.logger.info("Daily P&L reset at 6:35 AM PST")
+
+scheduler = BackgroundScheduler()
+scheduler.add_job(func=reset_daily_pnl_at_open, trigger="cron", hour=6, minute=35, timezone="America/Los_Angeles")
+scheduler.start()
 
 @app.route('/quick_pics', methods=['GET'])
 def quick_pics():
     now = datetime.utcnow()
-    quick_comps = Competition.query.filter(
-        Competition.name == "Quick Pics",
-        Competition.start_date > now
-    ).order_by(Competition.start_date).limit(2).all()
-    result = []
-    for comp in quick_comps:
-        countdown = (comp.start_date - now).total_seconds() if comp.start_date > now else 0
-        result.append({
-            'code': comp.code,
-            'name': comp.name,
-            'start_date': comp.start_date.isoformat(),
-            'end_date': comp.end_date.isoformat(),
-            'countdown': countdown
-        })
-    return jsonify(result)
+    comps = Competition.query.filter(Competition.name == "Quick Pics", Competition.start_date > now).order_by(Competition.start_date).limit(2).all()
+    return jsonify([{
+        'code': c.code, 'name': c.name, 'start_date': c.start_date.isoformat(),
+        'end_date': c.end_date.isoformat(), 'countdown': (c.start_date - now).total_seconds()
+    } for c in comps])
 
-# --------------------
-# Unified Competition Leaderboard (Individuals and Teams)
-# --------------------
 @app.route('/competition/<code>/leaderboard', methods=['GET'])
 def competition_leaderboard(code):
     comp = Competition.query.filter_by(code=code).first()
     if not comp:
-        return jsonify({'message': 'Competition not found'}), 404
-    leaderboard = []
-    members = CompetitionMember.query.filter_by(competition_id=comp.id).all()
-    for m in members:
+        return jsonify({'message': 'Not found'}), 404
+    lb = []
+    for m in CompetitionMember.query.filter_by(competition_id=comp.id).all():
         total = m.cash_balance
-        choldings = CompetitionHolding.query.filter_by(competition_member_id=m.id).all()
-        for h in choldings:
+        for h in CompetitionHolding.query.filter_by(competition_member_id=m.id).all():
             try:
                 price = get_current_price(h.symbol)
-            except Exception:
+            except:
                 price = 0
             total += price * h.quantity
         user = db.session.get(User, m.user_id)
-        leaderboard.append({'name': user.username, 'total_value': total})
-    leaderboard_sorted = sorted(leaderboard, key=lambda x: x['total_value'], reverse=True)
-    return jsonify(leaderboard_sorted)
+        lb.append({'name': user.username, 'total_value': total})
+    return jsonify(sorted(lb, key=lambda x: x['total_value'], reverse=True))
 
 @app.route('/competition/<code>/team_leaderboard', methods=['GET'])
 def competition_team_leaderboard(code):
     comp = Competition.query.filter_by(code=code).first()
     if not comp:
-        return jsonify({'message': 'Competition not found'}), 404
-    leaderboard = []
-    comp_teams = CompetitionTeam.query.filter_by(competition_id=comp.id).all()
-    for ct in comp_teams:
+        return jsonify({'message': 'Not found'}), 404
+    lb = []
+    for ct in CompetitionTeam.query.filter_by(competition_id=comp.id).all():
         total = ct.cash_balance
-        tholdings = CompetitionTeamHolding.query.filter_by(competition_team_id=ct.id).all()
-        for h in tholdings:
+        for h in CompetitionTeamHolding.query.filter_by(competition_team_id=ct.id).all():
             try:
                 price = get_current_price(h.symbol)
-            except Exception:
+            except:
                 price = 0
             total += price * h.quantity
         team = db.session.get(Team, ct.team_id)
-        leaderboard.append({'name': team.name, 'total_value': total})
-    leaderboard_sorted = sorted(leaderboard, key=lambda x: x['total_value'], reverse=True)
-    return jsonify(leaderboard_sorted)
+        lb.append({'name': team.name, 'total_value': total})
+    return jsonify(sorted(lb, key=lambda x: x['total_value'], reverse=True))
 
-# ✅ Add this ABOVE the "if __name__ == '__main__'" block
 @app.route('/admin/set_admin', methods=['POST'])
 def set_admin():
     data = request.get_json()
-    secret = data.get('secret')
-    if secret != "Timb3000!":
-        return jsonify({'message': 'Not authorized'}), 403
-
-    username = data.get('username')
-    user = User.query.filter_by(username=username).first()
+    if data.get('secret') != "Timb3000!":
+        return jsonify({'message': 'Unauthorized'}), 403
+    user = User.query.filter_by(username=data.get('username')).first()
     if not user:
-        return jsonify({'message': 'User not found'}), 404
-
+        return jsonify({'message': 'Not found'}), 404
     user.is_admin = True
     db.session.commit()
-    return jsonify({'message': f"{username} is now an admin."})
-
+    return jsonify({'message': f"{user.username} is admin."})
 
 # --------------------
-# Run the app
+# Run
 # --------------------
 if __name__ == '__main__':
-    # Local development only
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port)
