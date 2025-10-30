@@ -1108,41 +1108,49 @@ def admin_delete_competition():
         return jsonify({'message': 'Competition not found'}), 404
 
     try:
-        # --- Delete individual members + their holdings ---
-        comp_members = CompetitionMember.query.filter_by(competition_id=comp.id).all()
-        for m in comp_members:
-            CompetitionHolding.query.filter_by(competition_member_id=m.id).delete()
-            db.session.delete(m)
+        # --- Remove all related members & holdings ---
+        CompetitionHolding.query.filter(
+            CompetitionHolding.competition_member_id.in_(
+                db.session.query(CompetitionMember.id).filter_by(competition_id=comp.id)
+            )
+        ).delete(synchronize_session=False)
 
-        # --- Delete all teams + their team holdings + team members ---
-        comp_teams = CompetitionTeam.query.filter_by(competition_id=comp.id).all()
-        for t in comp_teams:
-            # Delete team holdings
-            CompetitionTeamHolding.query.filter_by(competition_team_id=t.id).delete()
-            # Delete team members
-            TeamMember.query.filter_by(team_id=t.team_id).delete()
-            # Delete the team itself
-            db.session.delete(t)
+        CompetitionMember.query.filter_by(competition_id=comp.id).delete(synchronize_session=False)
 
-        # --- Finally delete the competition itself ---
+        # --- Remove all related team holdings & team members ---
+        CompetitionTeamHolding.query.filter(
+            CompetitionTeamHolding.competition_team_id.in_(
+                db.session.query(CompetitionTeam.id).filter_by(competition_id=comp.id)
+            )
+        ).delete(synchronize_session=False)
+
+        TeamMember.query.filter(
+            TeamMember.team_id.in_(
+                db.session.query(CompetitionTeam.team_id).filter_by(competition_id=comp.id)
+            )
+        ).delete(synchronize_session=False)
+
+        CompetitionTeam.query.filter_by(competition_id=comp.id).delete(synchronize_session=False)
+
+        # --- Delete the competition itself ---
         db.session.delete(comp)
         db.session.commit()
 
-        app.logger.info(f"✅ Deleted competition {code} and all related data by admin {username}")
-        return jsonify({'message': f'Competition {code} and all related data deleted successfully.'}), 200
+        return jsonify({'message': f'Competition {code} deleted successfully.'}), 200
 
     except Exception as e:
         db.session.rollback()
-        app.logger.error(f"Error deleting competition {code}: {e}")
+        app.logger.error(f"❌ Error deleting competition {code}: {e}")
         return jsonify({'message': f'Failed to delete competition: {str(e)}'}), 500
+
 
 
 @app.route('/admin/delete_user', methods=['POST'])
 def admin_delete_user():
     data = request.get_json()
-    admin_username = data.get('username') or data.get('admin_username')
+    admin_username = data.get('username')
     target_username = data.get('target_username')
-    
+
     admin_user = User.query.filter_by(username=admin_username).first()
     if not admin_user or not admin_user.is_admin:
         return jsonify({'message': 'Not authorized'}), 403
@@ -1152,33 +1160,28 @@ def admin_delete_user():
         return jsonify({'message': 'User not found'}), 404
 
     try:
-        # --- Remove competition memberships and holdings ---
-        memberships = CompetitionMember.query.filter_by(user_id=target_user.id).all()
-        for m in memberships:
-            CompetitionHolding.query.filter_by(competition_member_id=m.id).delete()
-            db.session.delete(m)
+        # --- Delete user's holdings and memberships ---
+        CompetitionHolding.query.filter(
+            CompetitionHolding.competition_member_id.in_(
+                db.session.query(CompetitionMember.id).filter_by(user_id=target_user.id)
+            )
+        ).delete(synchronize_session=False)
 
-        # --- Remove team memberships and team holdings ---
-        team_memberships = TeamMember.query.filter_by(user_id=target_user.id).all()
-        for tm in team_memberships:
-            # Clean up any team holdings associated with the user's teams
-            team_entries = CompetitionTeam.query.filter_by(team_id=tm.team_id).all()
-            for te in team_entries:
-                CompetitionTeamHolding.query.filter_by(competition_team_id=te.id).delete()
-            db.session.delete(tm)
+        CompetitionMember.query.filter_by(user_id=target_user.id).delete(synchronize_session=False)
 
-        # --- Finally delete the user record ---
+        # --- Remove from any teams ---
+        TeamMember.query.filter_by(user_id=target_user.id).delete(synchronize_session=False)
+
+        # --- Finally delete user ---
         db.session.delete(target_user)
         db.session.commit()
 
-        app.logger.info(f"✅ Deleted user {target_username} and all related data by admin {admin_username}")
-        return jsonify({'message': f'User {target_username} and all related data deleted successfully.'}), 200
+        return jsonify({'message': f'User {target_username} deleted successfully.'}), 200
 
     except Exception as e:
         db.session.rollback()
-        app.logger.error(f"Error deleting user {target_username}: {e}")
+        app.logger.error(f"❌ Error deleting user {target_username}: {e}")
         return jsonify({'message': f'Failed to delete user: {str(e)}'}), 500
-
 
 
 
