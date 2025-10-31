@@ -688,11 +688,10 @@ def join_competition():
 
 @app.route('/competition/buy', methods=['POST'])
 def competition_buy():
-    
     data = request.get_json()
     username = data.get('username')
     competition_code = data.get('competition_code')
-    symbol = data.get('symbol')
+    symbol = data.get('symbol').upper()
     quantity = int(data.get('quantity'))
 
     user = User.query.filter_by(username=username).first()
@@ -703,35 +702,60 @@ def competition_buy():
     if not comp:
         return jsonify({'message': 'Competition not found'}), 404
 
-    # ---------- NEW: Enforce start/end date ----------
+    # ---------- Enforce start/end dates ----------
     now = datetime.utcnow()
-
-    # If there's a start_date and we haven't reached it, block trades
     if comp.start_date and now < comp.start_date:
         return jsonify({'message': 'Competition has not started yet. No trades allowed.'}), 400
-
-    # If there's an end_date and we've passed it, block trades
     if comp.end_date and now > comp.end_date:
         return jsonify({'message': 'Competition has ended. No trades allowed.'}), 400
-    # --------------------------------------------------
+    # --------------------------------------------
 
     member = CompetitionMember.query.filter_by(competition_id=comp.id, user_id=user.id).first()
     if not member:
         return jsonify({'message': 'User is not a member of this competition'}), 404
 
+    # ---------- Get current price ----------
     try:
         price = get_current_price(symbol)
     except Exception as e:
         return jsonify({'message': f'Error fetching price for symbol {symbol}: {str(e)}'}), 400
+    # ---------------------------------------
 
     cost = price * quantity
     if member.cash_balance < cost:
         return jsonify({'message': 'Insufficient funds in competition account'}), 400
 
+    # ---------- NEW: Enforce position limit ----------
+    limit_str = comp.max_position_limit or "100%"
+    try:
+        limit_pct = float(limit_str.strip('%')) / 100.0
+    except Exception:
+        limit_pct = 1.0  # default to 100% if malformed
+
+    holdings = CompetitionHolding.query.filter_by(competition_member_id=member.id).all()
+    total_value = sum((get_current_price(h.symbol) * h.quantity) for h in holdings) + member.cash_balance
+
+    existing = CompetitionHolding.query.filter_by(
+        competition_member_id=member.id, symbol=symbol
+    ).first()
+    existing_value = (existing.quantity * price) if existing else 0.0
+
+    new_symbol_value = existing_value + cost
+    new_symbol_pct = new_symbol_value / total_value if total_value > 0 else 1.0
+
+    if new_symbol_pct > limit_pct:
+        return jsonify({
+            "message": (
+                f"Buy rejected: would exceed {limit_str} position limit "
+                f"({new_symbol_pct * 100:.2f}% of portfolio)"
+            )
+        }), 400
+    # -----------------------------------------------
+
+    # Proceed with purchase
     member.cash_balance -= cost
-    existing_holding = CompetitionHolding.query.filter_by(competition_member_id=member.id, symbol=symbol).first()
-    if existing_holding:
-        existing_holding.quantity += quantity
+    if existing:
+        existing.quantity += quantity
     else:
         new_holding = CompetitionHolding(
             competition_member_id=member.id,
@@ -743,6 +767,7 @@ def competition_buy():
 
     db.session.commit()
     return jsonify({'message': 'Competition buy successful', 'competition_cash': member.cash_balance})
+
 
 
 @app.route('/competition/sell', methods=['POST'])
@@ -954,12 +979,11 @@ def competition_team_join():
 
 @app.route('/competition/team/buy', methods=['POST'])
 def competition_team_buy():
-    
     data = request.get_json()
     username = data.get('username')
     competition_code = data.get('competition_code')
     team_id = data.get('team_id')
-    symbol = data.get('symbol')
+    symbol = data.get('symbol').upper()
     quantity = int(data.get('quantity'))
 
     # 1. Find the user
@@ -999,6 +1023,36 @@ def competition_team_buy():
     if comp_team.cash_balance < cost:
         return jsonify({'message': 'Insufficient funds in competition team account'}), 400
 
+    # ---------- NEW: Enforce position limit ----------
+    limit_str = comp.max_position_limit or "100%"
+    try:
+        limit_pct = float(limit_str.strip('%')) / 100.0
+    except Exception:
+        limit_pct = 1.0  # default to 100%
+
+    # Calculate total team portfolio value
+    holdings = CompetitionTeamHolding.query.filter_by(competition_team_id=comp_team.id).all()
+    total_value = sum((get_current_price(h.symbol) * h.quantity) for h in holdings) + comp_team.cash_balance
+
+    # Determine current position size for this stock
+    existing = CompetitionTeamHolding.query.filter_by(
+        competition_team_id=comp_team.id,
+        symbol=symbol
+    ).first()
+    existing_value = (existing.quantity * price) if existing else 0.0
+
+    new_symbol_value = existing_value + cost
+    new_symbol_pct = new_symbol_value / total_value if total_value > 0 else 1.0
+
+    if new_symbol_pct > limit_pct:
+        return jsonify({
+            "message": (
+                f"Buy rejected: would exceed {limit_str} position limit "
+                f"({new_symbol_pct * 100:.2f}% of portfolio)"
+            )
+        }), 400
+    # -----------------------------------------------
+
     # 8. Deduct funds, update holding
     comp_team.cash_balance -= cost
     holding = CompetitionTeamHolding.query.filter_by(
@@ -1021,6 +1075,7 @@ def competition_team_buy():
         'message': 'Competition team buy successful',
         'competition_team_cash': comp_team.cash_balance
     })
+
 
 
 @app.route('/competition/team/sell', methods=['POST'])
