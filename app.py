@@ -322,7 +322,6 @@ def get_user():
 
     total_global_value = user.cash_balance + total_holdings_value
     daily_pnl = total_global_value - (user.start_of_day_value or total_global_value)
-    daily_pnl: round(daily_pnl, 2)
     global_return_pct = (global_pnl / 100000) * 100 if global_pnl is not None else 0
 
     # --- Individual Competition Accounts ---
@@ -1157,19 +1156,35 @@ def admin_delete_user():
         return jsonify({'message': 'User not found'}), 404
 
     try:
-        # --- Delete user's holdings and memberships ---
+        # --- Delete all holdings ---
+        Holding.query.filter_by(user_id=target_user.id).delete(synchronize_session=False)
+
+        # --- Delete competitions created by this user ---
+        comps = Competition.query.filter_by(created_by=target_user.id).all()
+        for comp in comps:
+            # delete related competition members and holdings
+            CompetitionHolding.query.filter(
+                CompetitionHolding.competition_member_id.in_(
+                    db.session.query(CompetitionMember.id).filter_by(competition_id=comp.id)
+                )
+            ).delete(synchronize_session=False)
+            CompetitionMember.query.filter_by(competition_id=comp.id).delete(synchronize_session=False)
+            CompetitionTeam.query.filter_by(competition_id=comp.id).delete(synchronize_session=False)
+            db.session.delete(comp)
+
+        # --- Delete user’s competition memberships ---
         CompetitionHolding.query.filter(
             CompetitionHolding.competition_member_id.in_(
                 db.session.query(CompetitionMember.id).filter_by(user_id=target_user.id)
             )
         ).delete(synchronize_session=False)
-
         CompetitionMember.query.filter_by(user_id=target_user.id).delete(synchronize_session=False)
 
-        # --- Remove from any teams ---
+        # --- Delete team memberships and teams created by user ---
         TeamMember.query.filter_by(user_id=target_user.id).delete(synchronize_session=False)
+        Team.query.filter_by(created_by=target_user.id).delete(synchronize_session=False)
 
-        # --- Finally delete user ---
+        # --- Finally delete the user ---
         db.session.delete(target_user)
         db.session.commit()
 
@@ -1179,6 +1194,7 @@ def admin_delete_user():
         db.session.rollback()
         app.logger.error(f"❌ Error deleting user {target_username}: {e}")
         return jsonify({'message': f'Failed to delete user: {str(e)}'}), 500
+
 
 
 
