@@ -56,6 +56,8 @@ class User(db.Model):
     cash_balance = db.Column(db.Float, default=100000)
     is_admin = db.Column(db.Boolean, default=False)  # Admin flag
     start_of_day_value = db.Column(db.Float, default=100000.0)  # Daily P&L anchor
+    realized_pnl = db.Column(db.Float, default=0.0)
+
    
 
     def set_password(self, password):
@@ -303,8 +305,8 @@ def get_user():
     # --- Global Account ---
     holdings = Holding.query.filter_by(user_id=user.id).all()
     global_portfolio = []
-    total_holdings_value = 0
-    global_pnl = 0
+    global_total_holdings_value = 0
+    global_unrealized_pnl = 0
 
     for h in holdings:
         try:
@@ -313,8 +315,8 @@ def get_user():
             price = 0
         value = price * h.quantity
         pnl = (price - h.buy_price) * h.quantity
-        global_pnl += pnl
-        total_holdings_value += value
+        global_unrealized_pnl += pnl
+        global_total_holdings_value += value
         global_portfolio.append({
             'symbol': h.symbol,
             'quantity': h.quantity,
@@ -323,119 +325,113 @@ def get_user():
             'buy_price': h.buy_price
         })
 
-    # Include realized + unrealized P&L
-    unrealized_pnl = global_pnl
-    total_pnl = (user.realized_pnl or 0.0) + unrealized_pnl
-    total_global_value = user.cash_balance + total_holdings_value
-    daily_pnl = total_global_value - (user.start_of_day_value or total_global_value)
-
-    # Total return = (current value - starting capital) / starting capital
-    global_return_pct = ((total_global_value - 100000.0) / 100000.0) * 100.0
-
+    global_total_pnl = (user.realized_pnl or 0.0) + global_unrealized_pnl
+    global_total_value = user.cash_balance + global_total_holdings_value
+    global_return_pct = ((global_total_value - 100000.0) / 100000.0) * 100.0
 
     # --- Individual Competition Accounts ---
     competition_accounts = []
     memberships = CompetitionMember.query.filter_by(user_id=user.id).all()
     for m in memberships:
         comp = db.session.get(Competition, m.competition_id)
-        if comp:
-            comp_holdings = CompetitionHolding.query.filter_by(competition_member_id=m.id).all()
-            comp_portfolio = []
-            total_comp_holdings = 0
-            comp_pnl = 0
+        if not comp:
+            continue
 
-            for ch in comp_holdings:
-                try:
-                    price = get_current_price(ch.symbol)
-                except Exception:
-                    price = 0
-                value = price * ch.quantity
-                pnl = (price - ch.buy_price) * ch.quantity
-                comp_pnl += pnl
-                total_comp_holdings += value
-                comp_portfolio.append({
-                    'symbol': ch.symbol,
-                    'quantity': ch.quantity,
-                    'current_price': price,
-                    'total_value': value,
-                    'buy_price': ch.buy_price
-                })
+        comp_holdings = CompetitionHolding.query.filter_by(competition_member_id=m.id).all()
+        comp_portfolio = []
+        comp_total_holdings_value = 0
+        comp_unrealized_pnl = 0
 
-            unrealized = comp_pnl
-            total_pnl = (m.realized_pnl or 0.0) + unrealized
-            total_comp_value = m.cash_balance + total_comp_holdings
-            return_pct = ((total_comp_value - 100000.0) / 100000.0) * 100.0
-
-
-            competition_accounts.append({
-                'code': comp.code,
-                'name': comp.name,
-                'cash_balance': m.cash_balance,
-                'portfolio': comp_portfolio,
-                'total_value': total_comp_value,
-                'pnl': total_pnl,
-                'return_pct': return_pct
+        for ch in comp_holdings:
+            try:
+                price = get_current_price(ch.symbol)
+            except Exception:
+                price = 0
+            value = price * ch.quantity
+            pnl = (price - ch.buy_price) * ch.quantity
+            comp_unrealized_pnl += pnl
+            comp_total_holdings_value += value
+            comp_portfolio.append({
+                'symbol': ch.symbol,
+                'quantity': ch.quantity,
+                'current_price': price,
+                'total_value': value,
+                'buy_price': ch.buy_price
             })
 
+        comp_total_pnl = (m.realized_pnl or 0.0) + comp_unrealized_pnl
+        comp_total_value = m.cash_balance + comp_total_holdings_value
+        comp_return_pct = ((comp_total_value - 100000.0) / 100000.0) * 100.0
+
+        competition_accounts.append({
+            'code': comp.code,
+            'name': comp.name,
+            'cash_balance': m.cash_balance,
+            'portfolio': comp_portfolio,
+            'total_value': comp_total_value,
+            'pnl': comp_total_pnl,
+            'return_pct': comp_return_pct
+        })
+
     # --- Team Competitions ---
-    team_memberships = TeamMember.query.filter_by(user_id=user.id).all()
     team_competitions = []
+    team_memberships = TeamMember.query.filter_by(user_id=user.id).all()
     for tm in team_memberships:
         ct_entries = CompetitionTeam.query.filter_by(team_id=tm.team_id).all()
         for ct in ct_entries:
             comp = db.session.get(Competition, ct.competition_id)
-            if comp:
-                ct_holdings = CompetitionTeamHolding.query.filter_by(competition_team_id=ct.id).all()
-                team_portfolio = []
-                total_holdings_value = 0
-                team_pnl = 0
+            if not comp:
+                continue
 
-                for cht in ct_holdings:
-                    try:
-                        price = get_current_price(cht.symbol)
-                    except Exception:
-                        price = 0
-                    value = price * cht.quantity
-                    pnl = (price - cht.buy_price) * cht.quantity
-                    team_pnl += pnl
-                    total_holdings_value += value
-                    team_portfolio.append({
-                        'symbol': cht.symbol,
-                        'quantity': cht.quantity,
-                        'current_price': price,
-                        'total_value': value,
-                        'buy_price': cht.buy_price
-                    })
+            ct_holdings = CompetitionTeamHolding.query.filter_by(competition_team_id=ct.id).all()
+            team_portfolio = []
+            team_total_holdings_value = 0
+            team_unrealized_pnl = 0
 
-                unrealized = team_pnl
-                total_pnl = (ct.realized_pnl or 0.0) + unrealized
-                total_value = ct.cash_balance + total_holdings_value
-                return_pct = ((total_value - 100000.0) / 100000.0) * 100.0
-
-
-                team_competitions.append({
-                    'code': comp.code,
-                    'name': comp.name,
-                    'cash_balance': ct.cash_balance,
-                    'portfolio': team_portfolio,
-                    'total_value': total_value,
-                    'team_id': ct.team_id,
-                    'pnl': total_pnl,
-                    'return_pct': return_pct
+            for cht in ct_holdings:
+                try:
+                    price = get_current_price(cht.symbol)
+                except Exception:
+                    price = 0
+                value = price * cht.quantity
+                pnl = (price - cht.buy_price) * cht.quantity
+                team_unrealized_pnl += pnl
+                team_total_holdings_value += value
+                team_portfolio.append({
+                    'symbol': cht.symbol,
+                    'quantity': cht.quantity,
+                    'current_price': price,
+                    'total_value': value,
+                    'buy_price': cht.buy_price
                 })
+
+            team_total_pnl = (ct.realized_pnl or 0.0) + team_unrealized_pnl
+            team_total_value = ct.cash_balance + team_total_holdings_value
+            team_return_pct = ((team_total_value - 100000.0) / 100000.0) * 100.0
+
+            team_competitions.append({
+                'code': comp.code,
+                'name': comp.name,
+                'cash_balance': ct.cash_balance,
+                'portfolio': team_portfolio,
+                'total_value': team_total_value,
+                'team_id': ct.team_id,
+                'pnl': team_total_pnl,
+                'return_pct': team_return_pct
+            })
 
     # --- Final Response ---
     response_data = {
         'username': user.username,
         'is_admin': user.is_admin,
         'global_account': {
-        'cash_balance': user.cash_balance,
-        'portfolio': global_portfolio,
-        'total_value': total_global_value,
-        'pnl': total_pnl,
-        'realized_pnl': user.realized_pnl,
-        'return_pct': global_return_pct
-    },
+            'cash_balance': user.cash_balance,
+            'portfolio': global_portfolio,
+            'total_value': global_total_value,
+            'pnl': global_total_pnl,
+            'realized_pnl': user.realized_pnl,
+            'return_pct': global_return_pct
+        },
         'competition_accounts': competition_accounts,
         'team_competitions': team_competitions
     }
