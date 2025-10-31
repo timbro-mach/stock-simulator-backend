@@ -88,6 +88,7 @@ class CompetitionMember(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     cash_balance = db.Column(db.Float, default=100000)
     start_of_day_value = db.Column(db.Float, default=100000.0)
+    realized_pnl = db.Column(db.Float, default=0.0)
     __table_args__ = (db.UniqueConstraint('competition_id', 'user_id', name='_competition_user_uc'),)
 
 class CompetitionHolding(db.Model):
@@ -107,6 +108,7 @@ class Team(db.Model):
     created_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     cash_balance = db.Column(db.Float, default=100000)
+    realized_pnl = db.Column(db.Float, default=0.0)
 
 class TeamMember(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -128,6 +130,7 @@ class CompetitionTeam(db.Model):
     team_id = db.Column(db.Integer, db.ForeignKey('team.id'), nullable=False)
     cash_balance = db.Column(db.Float, default=100000)
     start_of_day_value = db.Column(db.Float, default=100000.0)
+    realized_pnl = db.Column(db.Float, default=0.0)
     __table_args__ = (db.UniqueConstraint('competition_id', 'team_id', name='_competition_team_uc'),)
 
 class CompetitionTeamHolding(db.Model):
@@ -320,9 +323,15 @@ def get_user():
             'buy_price': h.buy_price
         })
 
+    # Include realized + unrealized P&L
+    unrealized_pnl = global_pnl
+    total_pnl = (user.realized_pnl or 0.0) + unrealized_pnl
     total_global_value = user.cash_balance + total_holdings_value
     daily_pnl = total_global_value - (user.start_of_day_value or total_global_value)
-    global_return_pct = (global_pnl / 100000) * 100 if global_pnl is not None else 0
+
+    # Total return = (current value - starting capital) / starting capital
+    global_return_pct = ((total_global_value - 100000.0) / 100000.0) * 100.0
+
 
     # --- Individual Competition Accounts ---
     competition_accounts = []
@@ -352,9 +361,11 @@ def get_user():
                     'buy_price': ch.buy_price
                 })
 
+            unrealized = comp_pnl
+            total_pnl = (m.realized_pnl or 0.0) + unrealized
             total_comp_value = m.cash_balance + total_comp_holdings
-            total_pnl = total_comp_value - 100000
-            return_pct = (total_pnl / 100000) * 100
+            return_pct = ((total_comp_value - 100000.0) / 100000.0) * 100.0
+
 
             competition_accounts.append({
                 'code': comp.code,
@@ -396,9 +407,11 @@ def get_user():
                         'buy_price': cht.buy_price
                     })
 
+                unrealized = team_pnl
+                total_pnl = (ct.realized_pnl or 0.0) + unrealized
                 total_value = ct.cash_balance + total_holdings_value
-                total_pnl = total_value - 100000
-                return_pct = (total_pnl / 100000) * 100
+                return_pct = ((total_value - 100000.0) / 100000.0) * 100.0
+
 
                 team_competitions.append({
                     'code': comp.code,
@@ -416,13 +429,13 @@ def get_user():
         'username': user.username,
         'is_admin': user.is_admin,
         'global_account': {
-            'cash_balance': user.cash_balance,
-            'portfolio': global_portfolio,
-            'total_value': total_global_value,
-            'pnl': global_pnl,
-            'return_pct': global_return_pct
-            
-        },
+        'cash_balance': user.cash_balance,
+        'portfolio': global_portfolio,
+        'total_value': total_global_value,
+        'pnl': total_pnl,
+        'realized_pnl': user.realized_pnl,
+        'return_pct': global_return_pct
+    },
         'competition_accounts': competition_accounts,
         'team_competitions': team_competitions
     }
@@ -574,12 +587,20 @@ def sell_stock():
     holding = Holding.query.filter_by(user_id=user.id, symbol=symbol).first()
     if not holding or holding.quantity < quantity:
         return jsonify({'message': 'Not enough shares to sell'}), 400
+    
+
+    # --- Record realized profit or loss ---
+    profit = (price - holding.buy_price) * quantity
+    user.realized_pnl = (user.realized_pnl or 0.0) + profit
+
     holding.quantity -= quantity
     if holding.quantity == 0:
         db.session.delete(holding)
     user.cash_balance += proceeds
     db.session.commit()
     return jsonify({'message': 'Sell successful', 'cash_balance': user.cash_balance})
+
+
 
 @app.route('/reset_global', methods=['POST'])
 def reset_global():
@@ -768,6 +789,11 @@ def competition_sell():
 
     # 7. Process sell
     proceeds = price * quantity
+        # --- Record realized profit/loss for this competition account ---
+    profit = (price - holding.buy_price) * quantity
+    member.realized_pnl = (member.realized_pnl or 0.0) + profit
+
+    
     holding.quantity -= quantity
     if holding.quantity == 0:
         db.session.delete(holding)
@@ -1469,19 +1495,35 @@ def competition_leaderboard(code):
     comp = Competition.query.filter_by(code=code).first()
     if not comp:
         return jsonify({'message': 'Competition not found'}), 404
+
     leaderboard = []
     members = CompetitionMember.query.filter_by(competition_id=comp.id).all()
+
     for m in members:
-        total = m.cash_balance
+        total_holdings = 0.0
+        unrealized = 0.0
+
         choldings = CompetitionHolding.query.filter_by(competition_member_id=m.id).all()
         for h in choldings:
             try:
                 price = get_current_price(h.symbol)
             except Exception:
                 price = 0
-            total += price * h.quantity
+            total_holdings += price * h.quantity
+            unrealized += (price - h.buy_price) * h.quantity
+
+        total = m.cash_balance + total_holdings
+        total_pnl = (m.realized_pnl or 0.0) + unrealized
+        return_pct = ((total - 100000.0) / 100000.0) * 100.0
+
         user = db.session.get(User, m.user_id)
-        leaderboard.append({'name': user.username, 'total_value': total})
+        leaderboard.append({
+            'name': user.username,
+            'total_value': total,
+            'pnl': total_pnl,
+            'return_pct': return_pct
+        })
+
     leaderboard_sorted = sorted(leaderboard, key=lambda x: x['total_value'], reverse=True)
     return jsonify(leaderboard_sorted)
 
@@ -1490,21 +1532,38 @@ def competition_team_leaderboard(code):
     comp = Competition.query.filter_by(code=code).first()
     if not comp:
         return jsonify({'message': 'Competition not found'}), 404
+
     leaderboard = []
     comp_teams = CompetitionTeam.query.filter_by(competition_id=comp.id).all()
+
     for ct in comp_teams:
-        total = ct.cash_balance
+        total_holdings = 0.0
+        unrealized = 0.0
+
         tholdings = CompetitionTeamHolding.query.filter_by(competition_team_id=ct.id).all()
         for h in tholdings:
             try:
                 price = get_current_price(h.symbol)
             except Exception:
                 price = 0
-            total += price * h.quantity
+            total_holdings += price * h.quantity
+            unrealized += (price - h.buy_price) * h.quantity
+
+        total = ct.cash_balance + total_holdings
+        total_pnl = (ct.realized_pnl or 0.0) + unrealized
+        return_pct = ((total - 100000.0) / 100000.0) * 100.0
+
         team = db.session.get(Team, ct.team_id)
-        leaderboard.append({'name': team.name, 'total_value': total})
+        leaderboard.append({
+            'name': team.name,
+            'total_value': total,
+            'pnl': total_pnl,
+            'return_pct': return_pct
+        })
+
     leaderboard_sorted = sorted(leaderboard, key=lambda x: x['total_value'], reverse=True)
     return jsonify(leaderboard_sorted)
+
 
 # ✅ Add this ABOVE the "if __name__ == '__main__'" block
 @app.route('/admin/set_admin', methods=['POST'])
