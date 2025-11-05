@@ -227,7 +227,8 @@ def login():
                     "portfolio": comp_portfolio,
                     "total_value": total_value,
                     "pnl": total_pnl,
-                    "return_pct": return_pct
+                    "return_pct": return_pct,
+                    "realized_pnl": m.realized_pnl or 0.0,
                 })
 
         # --- Team Competitions ---
@@ -272,6 +273,7 @@ def login():
                         "total_value": total_value,
                         "pnl": total_pnl,
                         "return_pct": return_pct,
+                        'realized_pnl': ct.realized_pnl or 0.0,
                         "team_id": ct.team_id
                     })
 
@@ -370,7 +372,8 @@ def get_user():
             'portfolio': comp_portfolio,
             'total_value': comp_total_value,
             'pnl': comp_total_pnl,
-            'return_pct': comp_return_pct
+            'return_pct': comp_return_pct,
+            'realized_pnl': m.realized_pnl or 0.0
         })
 
     # --- Team Competitions ---
@@ -417,7 +420,8 @@ def get_user():
                 'total_value': team_total_value,
                 'team_id': ct.team_id,
                 'pnl': team_total_pnl,
-                'return_pct': team_return_pct
+                'return_pct': team_return_pct,
+                'realized_pnl': ct.realized_pnl or 0.0
             })
 
     # --- Final Response ---
@@ -550,6 +554,8 @@ def buy_stock():
         price = get_current_price(symbol)
     except Exception as e:
         return jsonify({'message': f'Error fetching price for symbol {symbol}: {str(e)}'}), 400
+    
+    
     cost = quantity * price
     user = User.query.filter_by(username=username).first()
     if not user:
@@ -611,6 +617,7 @@ def reset_global():
 
     # Reset balance
     user.cash_balance = 100000
+    user.realized_pnl = 0.0
     db.session.commit()
 
     return jsonify({'message': 'Global account reset to $100,000 successfully.'}), 200
@@ -715,6 +722,7 @@ def competition_buy():
         price = get_current_price(symbol)
     except Exception as e:
         return jsonify({'message': f'Error fetching price for symbol {symbol}: {str(e)}'}), 400
+    # --- Record realized profit or loss ---
     # ---------------------------------------
 
     cost = price * quantity
@@ -1123,6 +1131,10 @@ def competition_team_sell():
         price = get_current_price(symbol)
     except Exception as e:
         return jsonify({'message': f'Error fetching price for symbol {symbol}: {str(e)}'}), 400
+
+    # --- Record realized profit or loss ---
+    profit = (price - holding.buy_price) * quantity
+    comp_team.realized_pnl = (comp_team.realized_pnl or 0.0) + profit
 
     # 8. Update quantity, add proceeds
     proceeds = price * quantity
