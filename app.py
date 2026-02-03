@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import func
 import requests, secrets
 from datetime import datetime, timedelta
 from dateutil import tz
@@ -10,6 +11,17 @@ logging.basicConfig(level=logging.INFO)
 from apscheduler.schedulers.background import BackgroundScheduler
 import pytz
 import os
+import hashlib
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+
+logger = logging.getLogger(__name__)
+
+PASSWORD_RESET_TOKEN_BYTES = 32
+PASSWORD_RESET_TOKEN_TTL_MINUTES = 60
+PASSWORD_RESET_RATE_LIMIT_IP = 5
+PASSWORD_RESET_RATE_LIMIT_EMAIL = 3
 
 app = Flask(__name__)
 CORS(app, origins=[
@@ -64,6 +76,22 @@ class User(db.Model):
         self.password_hash = generate_password_hash(password)
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
+
+class PasswordResetToken(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    token_hash = db.Column(db.String(64), unique=True, nullable=False, index=True)
+    expires_at = db.Column(db.DateTime, nullable=False)
+    used_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    request_ip = db.Column(db.String(45), nullable=True)
+    user_agent = db.Column(db.String(256), nullable=True)
+
+class PasswordResetRequest(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    email_hash = db.Column(db.String(64), nullable=True, index=True)
+    request_ip = db.Column(db.String(45), nullable=True, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
 
 class Holding(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -144,6 +172,94 @@ class CompetitionTeamHolding(db.Model):
 
 with app.app_context():
     db.create_all()
+
+# --------------------
+# Helper Functions: Password Reset
+# --------------------
+def normalize_email(email):
+    return email.strip().lower() if email else None
+
+def hash_value(value):
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+def generate_reset_token():
+    return secrets.token_urlsafe(PASSWORD_RESET_TOKEN_BYTES)
+
+def is_password_strong(password):
+    if not password or len(password) < 12:
+        return False
+    categories = 0
+    categories += any(c.islower() for c in password)
+    categories += any(c.isupper() for c in password)
+    categories += any(c.isdigit() for c in password)
+    categories += any(not c.isalnum() for c in password)
+    return categories >= 3
+
+def send_reset_email(recipient_email, reset_url, expires_minutes):
+    smtp_host = os.getenv("SMTP_HOST")
+    smtp_port = int(os.getenv("SMTP_PORT", "587"))
+    smtp_user = os.getenv("SMTP_USER")
+    smtp_password = os.getenv("SMTP_PASSWORD")
+    smtp_use_tls = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
+    email_from = os.getenv("EMAIL_FROM")
+
+    if not smtp_host or not email_from:
+        logger.warning("Email provider not configured; SMTP_HOST or EMAIL_FROM missing.")
+        return
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = "Reset your Stock Simulator password"
+    msg["From"] = email_from
+    msg["To"] = recipient_email
+
+    text_body = (
+        "Reset your Stock Simulator password\n\n"
+        f"Use the link below to reset your password:\n{reset_url}\n\n"
+        f"This link expires in {expires_minutes} minutes.\n"
+        "If you didn’t request this, you can safely ignore this email."
+    )
+    html_body = f"""
+    <p>Reset your Stock Simulator password</p>
+    <p><a href="{reset_url}" style="padding:10px 16px;background:#0f172a;color:#fff;text-decoration:none;border-radius:6px;">Reset Password</a></p>
+    <p>This link expires in {expires_minutes} minutes.</p>
+    <p>If you didn’t request this, you can safely ignore this email.</p>
+    """
+
+    msg.attach(MIMEText(text_body, "plain"))
+    msg.attach(MIMEText(html_body, "html"))
+
+    try:
+        if smtp_use_tls:
+            server = smtplib.SMTP(smtp_host, smtp_port)
+            server.starttls()
+        else:
+            server = smtplib.SMTP_SSL(smtp_host, smtp_port)
+        if smtp_user and smtp_password:
+            server.login(smtp_user, smtp_password)
+        server.sendmail(email_from, [recipient_email], msg.as_string())
+        server.quit()
+    except Exception as exc:
+        logger.exception("Failed to send password reset email: %s", exc)
+
+def record_password_reset_request(email_hash, request_ip):
+    entry = PasswordResetRequest(
+        email_hash=email_hash,
+        request_ip=request_ip
+    )
+    db.session.add(entry)
+    db.session.commit()
+
+def is_rate_limited(email_hash, request_ip):
+    cutoff = datetime.utcnow() - timedelta(minutes=1)
+    ip_count = PasswordResetRequest.query.filter(
+        PasswordResetRequest.request_ip == request_ip,
+        PasswordResetRequest.created_at >= cutoff
+    ).count()
+    email_count = PasswordResetRequest.query.filter(
+        PasswordResetRequest.email_hash == email_hash,
+        PasswordResetRequest.created_at >= cutoff
+    ).count()
+    return ip_count >= PASSWORD_RESET_RATE_LIMIT_IP or email_count >= PASSWORD_RESET_RATE_LIMIT_EMAIL
 
 # --------------------
 # Helper Function: Fetch current price from Alpha Vantage
@@ -289,6 +405,109 @@ def login():
     # --- Invalid credentials ---
     else:
         return jsonify({'message': 'Invalid credentials'}), 401
+
+
+# --------------------
+# Password Reset Endpoints
+# --------------------
+@app.route('/api/auth/forgot-password', methods=['POST'])
+def forgot_password():
+    data = request.get_json() or {}
+    email = normalize_email(data.get('email'))
+    email_hash = hash_value(email) if email else hash_value("")
+    request_ip = (request.headers.get("X-Forwarded-For", request.remote_addr) or "").split(",")[0].strip()
+    user_agent = request.headers.get("User-Agent", "")
+
+    rate_limited = is_rate_limited(email_hash, request_ip)
+    record_password_reset_request(email_hash, request_ip)
+
+    if rate_limited:
+        logger.info(
+            "password_reset_rate_limited email_hash=%s ip=%s user_agent=%s",
+            email_hash,
+            request_ip,
+            user_agent
+        )
+        return jsonify({'message': 'If an account exists for that email, we sent a reset link.'}), 200
+
+    user = User.query.filter(func.lower(User.email) == email).first() if email else None
+    if user:
+        now = datetime.utcnow()
+        PasswordResetToken.query.filter(
+            PasswordResetToken.user_id == user.id,
+            PasswordResetToken.used_at.is_(None),
+            PasswordResetToken.expires_at > now
+        ).update({PasswordResetToken.used_at: now}, synchronize_session=False)
+        raw_token = generate_reset_token()
+        token_hash = hash_value(raw_token)
+        expires_at = now + timedelta(minutes=PASSWORD_RESET_TOKEN_TTL_MINUTES)
+        reset_token = PasswordResetToken(
+            user_id=user.id,
+            token_hash=token_hash,
+            expires_at=expires_at,
+            request_ip=request_ip,
+            user_agent=user_agent[:256]
+        )
+        db.session.add(reset_token)
+        db.session.commit()
+
+        app_base_url = os.getenv("APP_BASE_URL", "").rstrip("/")
+        if app_base_url:
+            reset_url = f"{app_base_url}/reset-password?token={raw_token}"
+            send_reset_email(user.email, reset_url, PASSWORD_RESET_TOKEN_TTL_MINUTES)
+        else:
+            logger.warning("APP_BASE_URL not set; unable to send reset link.")
+
+        logger.info(
+            "password_reset_requested user_id=%s email_hash=%s ip=%s user_agent=%s",
+            user.id,
+            email_hash,
+            request_ip,
+            user_agent
+        )
+    else:
+        logger.info(
+            "password_reset_requested email_hash=%s ip=%s user_agent=%s",
+            email_hash,
+            request_ip,
+            user_agent
+        )
+
+    return jsonify({'message': 'If an account exists for that email, we sent a reset link.'}), 200
+
+@app.route('/api/auth/reset-password', methods=['POST'])
+def reset_password():
+    data = request.get_json() or {}
+    raw_token = data.get('token')
+    new_password = data.get('newPassword')
+
+    if not raw_token:
+        return jsonify({'message': 'Token is required.'}), 400
+    if not is_password_strong(new_password):
+        return jsonify({'message': 'Password does not meet strength requirements.'}), 400
+
+    token_hash = hash_value(raw_token)
+    token_record = PasswordResetToken.query.filter_by(token_hash=token_hash).first()
+    if not token_record:
+        return jsonify({'message': 'Invalid or expired token.'}), 400
+    if token_record.used_at is not None or token_record.expires_at < datetime.utcnow():
+        return jsonify({'message': 'Invalid or expired token.'}), 400
+
+    user = db.session.get(User, token_record.user_id)
+    if not user:
+        return jsonify({'message': 'Invalid or expired token.'}), 400
+
+    user.set_password(new_password)
+    token_record.used_at = datetime.utcnow()
+    db.session.commit()
+
+    logger.info(
+        "password_reset_completed user_id=%s token_id=%s",
+        user.id,
+        token_record.id
+    )
+
+    return jsonify({'message': 'Password updated successfully.'}), 200
 
 
 # --------------------
