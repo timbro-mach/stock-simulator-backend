@@ -8,3 +8,6 @@ APScheduler==3.9.1
 psycopg2-binary
 Flask-Migrate==4.0.7
 pytest==8.2.2
+python-dateutil==2.9.0.post0
+pytz==2024.1
+requests==2.32.3
