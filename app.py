@@ -12,9 +12,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 import pytz
 import os
 import hashlib
-import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
+import msal
 
 logger = logging.getLogger(__name__)
 
@@ -196,50 +194,72 @@ def is_password_strong(password):
     return categories >= 3
 
 def send_reset_email(recipient_email, reset_url, expires_minutes):
-    smtp_host = os.getenv("SMTP_HOST")
-    smtp_port = int(os.getenv("SMTP_PORT", "587"))
-    smtp_user = os.getenv("SMTP_USER")
-    smtp_password = os.getenv("SMTP_PASSWORD")
-    smtp_use_tls = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
-    email_from = os.getenv("EMAIL_FROM")
+    tenant_id = os.getenv("MS_TENANT_ID")
+    client_id = os.getenv("MS_CLIENT_ID")
+    client_secret = os.getenv("MS_CLIENT_SECRET")
+    sender_email = os.getenv("MS_SENDER_EMAIL")
 
-    if not smtp_host or not email_from:
-        logger.warning("Email provider not configured; SMTP_HOST or EMAIL_FROM missing.")
+    if not tenant_id or not client_id or not client_secret or not sender_email:
+        logger.warning("Microsoft Graph email not configured; missing tenant/client/sender settings.")
         return
 
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = "Reset your Stock Simulator password"
-    msg["From"] = email_from
-    msg["To"] = recipient_email
-
-    text_body = (
-        "Reset your Stock Simulator password\n\n"
-        f"Use the link below to reset your password:\n{reset_url}\n\n"
-        f"This link expires in {expires_minutes} minutes.\n"
-        "If you didn’t request this, you can safely ignore this email."
+    authority = f"https://login.microsoftonline.com/{tenant_id}"
+    graph_app = msal.ConfidentialClientApplication(
+        client_id=client_id,
+        client_credential=client_secret,
+        authority=authority
     )
-    html_body = f"""
-    <p>Reset your Stock Simulator password</p>
-    <p><a href="{reset_url}" style="padding:10px 16px;background:#0f172a;color:#fff;text-decoration:none;border-radius:6px;">Reset Password</a></p>
-    <p>This link expires in {expires_minutes} minutes.</p>
-    <p>If you didn’t request this, you can safely ignore this email.</p>
-    """
+    token_result = graph_app.acquire_token_for_client(
+        scopes=["https://graph.microsoft.com/.default"]
+    )
+    access_token = token_result.get("access_token")
+    if not access_token:
+        logger.warning("Microsoft Graph token acquisition failed. error=%s", token_result.get("error"))
+        return
 
-    msg.attach(MIMEText(text_body, "plain"))
-    msg.attach(MIMEText(html_body, "html"))
+    html_body = (
+        "<p>Reset your Stock Simulator password</p>"
+        f'<p><a href="{reset_url}" '
+        'style="padding:10px 16px;background:#0f172a;color:#fff;text-decoration:none;border-radius:6px;">'
+        "Reset Password</a></p>"
+        f"<p>This link expires in {expires_minutes} minutes.</p>"
+        "<p>If you didn’t request this, you can safely ignore this email.</p>"
+    )
+
+    payload = {
+        "message": {
+            "subject": "Reset your Stock Simulator password",
+            "body": {
+                "contentType": "HTML",
+                "content": html_body
+            },
+            "toRecipients": [
+                {"emailAddress": {"address": recipient_email}}
+            ]
+        },
+        "saveToSentItems": "false"
+    }
 
     try:
-        if smtp_use_tls:
-            server = smtplib.SMTP(smtp_host, smtp_port)
-            server.starttls()
+        response = requests.post(
+            f"https://graph.microsoft.com/v1.0/users/{sender_email}/sendMail",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json"
+            },
+            json=payload,
+            timeout=10
+        )
+        if 200 <= response.status_code < 300:
+            logger.info("Microsoft Graph sendMail success status=%s", response.status_code)
         else:
-            server = smtplib.SMTP_SSL(smtp_host, smtp_port)
-        if smtp_user and smtp_password:
-            server.login(smtp_user, smtp_password)
-        server.sendmail(email_from, [recipient_email], msg.as_string())
-        server.quit()
-    except Exception as exc:
-        logger.exception("Failed to send password reset email: %s", exc)
+            logger.warning(
+                "Microsoft Graph sendMail failed status=%s response=%s",
+                response.status_code,
+                response.text
+            )
+    except requests.RequestException as exc:
+        logger.exception("Microsoft Graph sendMail exception: %s", exc)
 
 def record_password_reset_request(email_hash, request_ip):
     entry = PasswordResetRequest(
@@ -432,6 +452,7 @@ def forgot_password():
 
     user = User.query.filter(func.lower(User.email) == email).first() if email else None
     if user:
+        logger.info("password_reset_user_lookup found user_id=%s", user.id)
         now = datetime.utcnow()
         PasswordResetToken.query.filter(
             PasswordResetToken.user_id == user.id,
@@ -466,6 +487,7 @@ def forgot_password():
             user_agent
         )
     else:
+        logger.info("password_reset_user_lookup not_found")
         logger.info(
             "password_reset_requested email_hash=%s ip=%s user_agent=%s",
             email_hash,

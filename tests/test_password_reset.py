@@ -1,5 +1,6 @@
 import importlib
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,8 @@ def app_client(tmp_path, monkeypatch):
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path}")
     monkeypatch.setenv("APP_BASE_URL", "https://example.com")
     monkeypatch.setenv("SMTP_HOST", "")
+    if "msal" not in sys.modules:
+        sys.modules["msal"] = types.SimpleNamespace(ConfidentialClientApplication=object)
     if "app" in sys.modules:
         del sys.modules["app"]
     app_module = importlib.import_module("app")
@@ -54,6 +57,51 @@ def test_token_is_stored_hashed(app_client, monkeypatch):
         assert token_record is not None
         assert token_record.token_hash != "rawtoken"
         assert token_record.token_hash == app_module.hash_value("rawtoken")
+
+
+def test_send_reset_email_uses_graph(monkeypatch, app_client):
+    _, app_module = app_client
+    monkeypatch.setenv("MS_TENANT_ID", "tenant-id")
+    monkeypatch.setenv("MS_CLIENT_ID", "client-id")
+    monkeypatch.setenv("MS_CLIENT_SECRET", "client-secret")
+    monkeypatch.setenv("MS_SENDER_EMAIL", "sender@example.com")
+
+    class FakeMsalApp:
+        def __init__(self, client_id, client_credential, authority):
+            self.client_id = client_id
+            self.client_credential = client_credential
+            self.authority = authority
+
+        def acquire_token_for_client(self, scopes):
+            return {"access_token": "test-token"}
+
+    monkeypatch.setattr(app_module.msal, "ConfidentialClientApplication", FakeMsalApp)
+
+    captured = {}
+
+    def fake_post(url, headers, json, timeout):
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["json"] = json
+        captured["timeout"] = timeout
+
+        class FakeResponse:
+            status_code = 202
+            text = ""
+
+        return FakeResponse()
+
+    monkeypatch.setattr(app_module.requests, "post", fake_post)
+
+    app_module.send_reset_email(
+        "recipient@example.com",
+        "https://example.com/reset-password?token=token",
+        60
+    )
+
+    assert captured["url"] == "https://graph.microsoft.com/v1.0/users/sender@example.com/sendMail"
+    assert captured["headers"]["Authorization"] == "Bearer test-token"
+    assert captured["json"]["message"]["toRecipients"][0]["emailAddress"]["address"] == "recipient@example.com"
 
 
 def test_reset_password_rejects_invalid_token(app_client):
