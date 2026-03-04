@@ -4,7 +4,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import func
 import requests, secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dateutil import tz
 import logging
 logging.basicConfig(level=logging.INFO)
@@ -168,6 +168,21 @@ class CompetitionTeamHolding(db.Model):
     quantity = db.Column(db.Integer, nullable=False)
     buy_price = db.Column(db.Float, nullable=False)
 
+
+class LimitOrder(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False, index=True)
+    symbol = db.Column(db.String(10), nullable=False)
+    side = db.Column(db.String(8), nullable=False)
+    quantity = db.Column(db.Integer, nullable=False)
+    limit_price = db.Column(db.Float, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    status = db.Column(db.String(20), nullable=False, default="open", index=True)
+    account_context = db.Column(db.String(32), nullable=False, default="global")
+    filled_qty = db.Column(db.Integer, nullable=False, default=0)
+    avg_fill_price = db.Column(db.Float, nullable=True)
+
 with app.app_context():
     db.create_all()
 
@@ -296,6 +311,187 @@ def get_current_price(symbol):
     if "05. price" not in global_quote:
         raise Exception(f"No price information available for symbol {symbol}")
     return float(global_quote["05. price"])
+
+
+VALID_RANGES = {"1D", "1W", "1M", "6M", "1Y"}
+
+
+def _round_metric(value, places=4):
+    if value is None:
+        return None
+    return round(float(value), places)
+
+
+def _market_session(now_est):
+    if now_est.weekday() >= 5:
+        return "closed"
+    market_open = now_est.replace(hour=9, minute=30, second=0, microsecond=0)
+    regular_close = now_est.replace(hour=16, minute=0, second=0, microsecond=0)
+    post_close = now_est.replace(hour=20, minute=0, second=0, microsecond=0)
+    if now_est < market_open:
+        return "pre"
+    if now_est <= regular_close:
+        return "regular"
+    if now_est <= post_close:
+        return "post"
+    return "closed"
+
+
+def _fetch_alpha_vantage(params):
+    response = requests.get("https://www.alphavantage.co/query", params=params, timeout=15)
+    if response.status_code != 200:
+        raise Exception(f"Alpha Vantage API error: {response.status_code}")
+    data = response.json()
+    if isinstance(data, dict) and data.get("Note"):
+        raise Exception(data["Note"])
+    return data
+
+
+def _parse_chart_points(time_series):
+    points = []
+    for ts, point in time_series.items():
+        price_val = point.get("4. close") or point.get("5. adjusted close")
+        if not price_val:
+            continue
+        ts_normalized = ts.replace(" ", "T")
+        if len(ts_normalized) == 10:
+            ts_normalized = f"{ts_normalized}T00:00:00"
+        dt = datetime.fromisoformat(ts_normalized)
+        points.append({"timestamp": dt, "price": float(price_val)})
+    points.sort(key=lambda x: x["timestamp"])
+    return points
+
+
+def _range_window(range_param, now_est):
+    if range_param == "1D":
+        return now_est - timedelta(days=1)
+    if range_param == "1W":
+        return now_est - timedelta(days=7)
+    if range_param == "1M":
+        return now_est - timedelta(days=30)
+    if range_param == "6M":
+        return now_est - timedelta(days=182)
+    return now_est - timedelta(days=365)
+
+
+def build_stock_overview(symbol, range_param):
+    range_param = (range_param or "1M").upper()
+    if range_param not in VALID_RANGES:
+        raise ValueError("Invalid range")
+
+    now_utc = datetime.now(timezone.utc)
+    now_est = now_utc.astimezone(pytz.timezone("America/New_York"))
+    window_start_est = _range_window(range_param, now_est)
+
+    quote_data = _fetch_alpha_vantage({
+        "function": "GLOBAL_QUOTE",
+        "symbol": symbol,
+        "entitlement": "realtime",
+        "apikey": ALPHA_VANTAGE_API_KEY,
+    })
+    global_quote = quote_data.get("Global Quote") or {}
+    current_price = float(global_quote.get("05. price") or 0)
+    prev_close_price = float(global_quote.get("08. previous close") or 0)
+
+    if range_param == "1D":
+        series_params = {
+            "function": "TIME_SERIES_INTRADAY",
+            "symbol": symbol,
+            "interval": "5min",
+            "apikey": ALPHA_VANTAGE_API_KEY,
+        }
+        ts_key_resolver = lambda d: next((k for k in d if "Time Series" in k), None)
+    elif range_param in {"1W", "1M"}:
+        series_params = {"function": "TIME_SERIES_DAILY_ADJUSTED", "symbol": symbol, "apikey": ALPHA_VANTAGE_API_KEY}
+        ts_key_resolver = lambda _: "Time Series (Daily)"
+    else:
+        series_params = {"function": "TIME_SERIES_WEEKLY_ADJUSTED", "symbol": symbol, "apikey": ALPHA_VANTAGE_API_KEY}
+        ts_key_resolver = lambda _: "Weekly Adjusted Time Series"
+
+    series_data = _fetch_alpha_vantage(series_params)
+    ts_key = ts_key_resolver(series_data)
+    if not ts_key or ts_key not in series_data:
+        raise Exception(f"No valid chart data found for symbol {symbol}")
+
+    points = _parse_chart_points(series_data[ts_key])
+    filtered_points = []
+    est_tz = pytz.timezone("America/New_York")
+    for point in points:
+        if point["timestamp"].tzinfo is None:
+            point_est = est_tz.localize(point["timestamp"])
+        else:
+            point_est = point["timestamp"].astimezone(est_tz)
+        if point_est >= window_start_est:
+            filtered_points.append(point)
+
+    if not filtered_points and points:
+        filtered_points = [points[-1]]
+
+    if prev_close_price <= 0:
+        daily_data = _fetch_alpha_vantage({"function": "TIME_SERIES_DAILY_ADJUSTED", "symbol": symbol, "apikey": ALPHA_VANTAGE_API_KEY})
+        daily_series = daily_data.get("Time Series (Daily)", {})
+        prev_close_candidates = sorted(daily_series.items(), key=lambda item: item[0], reverse=True)
+        if len(prev_close_candidates) > 1:
+            prev_close_price = float(prev_close_candidates[1][1].get("4. close") or prev_close_candidates[1][1].get("5. adjusted close") or 0)
+
+    range_start_price = filtered_points[0]["price"] if filtered_points else current_price
+    today_change_value = current_price - prev_close_price
+    today_change_percent = (today_change_value / prev_close_price * 100.0) if prev_close_price > 0 else None
+    range_change_value = current_price - range_start_price
+    range_change_percent = (range_change_value / range_start_price * 100.0) if range_start_price > 0 else None
+
+    app.logger.info(
+        "stock_overview_metrics symbol=%s range=%s as_of=%s current=%s prev_close=%s range_start=%s",
+        symbol,
+        range_param,
+        now_utc.isoformat(),
+        current_price,
+        prev_close_price,
+        range_start_price,
+    )
+    if prev_close_price <= 0 or range_start_price <= 0:
+        app.logger.warning("metric_warning_missing_baseline symbol=%s range=%s", symbol, range_param)
+
+    chart_points = [
+        {
+            "timestamp": p["timestamp"].isoformat(),
+            "price": _round_metric(p["price"]),
+        }
+        for p in filtered_points
+    ]
+
+    latest_point_ts = chart_points[-1]["timestamp"] if chart_points else now_utc.isoformat()
+    is_stale = False
+    if chart_points:
+        latest_ts = datetime.fromisoformat(latest_point_ts)
+        if latest_ts.tzinfo is None:
+            latest_ts = latest_ts.replace(tzinfo=timezone.utc)
+        age_seconds = (now_utc - latest_ts.astimezone(timezone.utc)).total_seconds()
+        is_stale = age_seconds > 900
+        if is_stale:
+            app.logger.warning("provider_data_stale symbol=%s range=%s latest_point_ts=%s age_seconds=%s", symbol, range_param, latest_point_ts, age_seconds)
+
+    app.logger.info("provider_snapshot symbol=%s quote_timestamp=%s chart_latest=%s", symbol, now_utc.isoformat(), latest_point_ts)
+
+    return {
+        "symbol": symbol.upper(),
+        "as_of_timestamp": now_utc.isoformat(),
+        "current_price": _round_metric(current_price),
+        "prev_close_price": _round_metric(prev_close_price),
+        "today_change_value": _round_metric(today_change_value),
+        "today_change_percent": _round_metric(today_change_percent),
+        "range": range_param,
+        "range_start_price": _round_metric(range_start_price),
+        "range_change_value": _round_metric(range_change_value),
+        "range_change_percent": _round_metric(range_change_percent),
+        "chart_points": chart_points,
+        "metadata": {
+            "price_source": "alpha_vantage",
+            "timezone": "America/New_York",
+            "market_session": _market_session(now_est),
+            "is_stale": is_stale,
+        },
+    }
 
 # --------------------
 # Endpoints for Registration and Login
@@ -716,70 +912,25 @@ def stock_chart(symbol):
     range_param = request.args.get("range", "1M").upper()
 
     try:
-        # --- Map range to Alpha Vantage function & limit ---
-        if range_param == "1D":
-            function = "TIME_SERIES_INTRADAY"
-            params = {
-                "function": function,
-                "symbol": symbol,
-                "interval": "5min",
-                "apikey": ALPHA_VANTAGE_API_KEY,
-            }
-            max_points = 78  # ~1 trading day
-
-        elif range_param in ["1W", "1M"]:
-            function = "TIME_SERIES_DAILY_ADJUSTED"
-            params = {"function": function, "symbol": symbol, "apikey": ALPHA_VANTAGE_API_KEY}
-            max_points = 7 if range_param == "1W" else 30
-
-        elif range_param in ["6M", "1Y"]:
-            function = "TIME_SERIES_WEEKLY_ADJUSTED"
-            params = {"function": function, "symbol": symbol, "apikey": ALPHA_VANTAGE_API_KEY}
-            max_points = 26 if range_param == "6M" else 52
-
-        else:
-            # Default fallback: 1M
-            function = "TIME_SERIES_DAILY_ADJUSTED"
-            params = {"function": function, "symbol": symbol, "apikey": ALPHA_VANTAGE_API_KEY}
-            max_points = 30
-
-        # --- Fetch data ---
-        url = "https://www.alphavantage.co/query"
-        response = requests.get(url, params=params, timeout=15)
-        if response.status_code != 200:
-            return jsonify({"error": f"Alpha Vantage API error: {response.status_code}"}), 400
-
-        data = response.json()
-
-        # --- Parse based on function type ---
-        if function == "TIME_SERIES_INTRADAY":
-            ts_key = next((k for k in data.keys() if "Time Series" in k), None)
-        elif function == "TIME_SERIES_DAILY_ADJUSTED":
-            ts_key = "Time Series (Daily)"
-        elif function == "TIME_SERIES_WEEKLY_ADJUSTED":
-            ts_key = "Weekly Adjusted Time Series"
-        else:
-            ts_key = None
-
-        if not ts_key or ts_key not in data:
-            return jsonify({"error": f"No valid data found for symbol {symbol}"}), 404
-
-        time_series = data[ts_key]
-
-        # --- Build chart data ---
-        chart_data = []
-        for date_str, data_point in list(time_series.items())[:max_points]:
-            chart_data.append({
-                "date": date_str,
-                "close": float(data_point.get("4. close") or data_point.get("5. adjusted close") or 0)
-            })
-
-        chart_data.sort(key=lambda x: x["date"])
+        overview = build_stock_overview(symbol, range_param)
+        chart_data = [{"date": p["timestamp"], "close": p["price"]} for p in overview["chart_points"]]
         return jsonify(chart_data)
-
     except Exception as e:
         app.logger.error(f"Error fetching chart data for {symbol}: {e}")
         return jsonify({"error": f"Failed to fetch chart data for {symbol}: {str(e)}"}), 400
+
+
+@app.route('/stock_overview/<symbol>', methods=['GET'])
+def stock_overview(symbol):
+    range_param = request.args.get("range", "1M").upper()
+    try:
+        overview = build_stock_overview(symbol, range_param)
+        return jsonify(overview)
+    except ValueError:
+        return jsonify({"error": "range must be one of 1D,1W,1M,6M,1Y"}), 400
+    except Exception as e:
+        app.logger.error("Error generating stock overview for %s: %s", symbol, e)
+        return jsonify({"error": f"Failed to fetch overview for symbol {symbol}: {str(e)}"}), 400
 
 
 # --------------------
@@ -1869,6 +2020,162 @@ def competition_team_leaderboard(code):
     return jsonify(leaderboard_sorted)
 
 
+VALID_ORDER_STATUSES = {"open", "partially_filled", "filled", "cancelled", "expired", "rejected"}
+
+
+def _serialize_limit_order(order):
+    return {
+        "id": order.id,
+        "user_id": order.user_id,
+        "symbol": order.symbol,
+        "side": order.side,
+        "quantity": order.quantity,
+        "limit_price": _round_metric(order.limit_price),
+        "created_at": order.created_at.isoformat(),
+        "updated_at": order.updated_at.isoformat(),
+        "status": order.status,
+        "account_context": order.account_context,
+        "filled_qty": order.filled_qty,
+        "avg_fill_price": _round_metric(order.avg_fill_price) if order.avg_fill_price is not None else None,
+    }
+
+
+def process_open_limit_orders():
+    with app.app_context():
+        open_orders = LimitOrder.query.filter(LimitOrder.status.in_(["open", "partially_filled"])).all()
+        for order in open_orders:
+            if order.status not in ["open", "partially_filled"]:
+                continue
+            try:
+                current_price = get_current_price(order.symbol)
+                should_fill = (order.side == "buy" and current_price <= order.limit_price) or (
+                    order.side == "sell" and current_price >= order.limit_price
+                )
+                if not should_fill:
+                    continue
+
+                fill_qty = order.quantity - order.filled_qty
+                if fill_qty <= 0:
+                    continue
+
+                user = db.session.get(User, order.user_id)
+                if not user:
+                    order.status = "rejected"
+                    continue
+
+                if order.side == "buy":
+                    cost = current_price * fill_qty
+                    if user.cash_balance < cost:
+                        order.status = "rejected"
+                        continue
+                    user.cash_balance -= cost
+                    holding = Holding.query.filter_by(user_id=user.id, symbol=order.symbol).first()
+                    if holding:
+                        holding.quantity += fill_qty
+                    else:
+                        db.session.add(Holding(user_id=user.id, symbol=order.symbol, quantity=fill_qty, buy_price=current_price))
+                else:
+                    holding = Holding.query.filter_by(user_id=user.id, symbol=order.symbol).first()
+                    if not holding or holding.quantity < fill_qty:
+                        order.status = "rejected"
+                        continue
+                    proceeds = current_price * fill_qty
+                    user.cash_balance += proceeds
+                    user.realized_pnl = (user.realized_pnl or 0.0) + ((current_price - holding.buy_price) * fill_qty)
+                    holding.quantity -= fill_qty
+                    if holding.quantity == 0:
+                        db.session.delete(holding)
+
+                order.filled_qty = order.quantity
+                order.avg_fill_price = current_price
+                order.status = "filled"
+            except Exception as exc:
+                app.logger.warning("limit_order_process_error id=%s error=%s", order.id, exc)
+        db.session.commit()
+
+
+@app.route('/orders/limit', methods=['GET'])
+def list_limit_orders():
+    username = request.args.get('username')
+    if not username:
+        return jsonify({'message': 'username is required'}), 400
+    user = User.query.filter_by(username=username).first()
+    if not user:
+        return jsonify({'message': 'User not found'}), 404
+
+    status = request.args.get('status')
+    query = LimitOrder.query.filter_by(user_id=user.id)
+    if status:
+        if status not in VALID_ORDER_STATUSES:
+            return jsonify({'message': 'invalid status'}), 400
+        query = query.filter_by(status=status)
+    orders = query.order_by(LimitOrder.created_at.desc()).all()
+    return jsonify([_serialize_limit_order(order) for order in orders])
+
+
+@app.route('/orders/limit', methods=['POST'])
+def create_limit_order():
+    data = request.get_json() or {}
+    username = data.get('username')
+    symbol = (data.get('symbol') or '').upper()
+    side = (data.get('side') or '').lower()
+    account_context = data.get('account_context') or 'global'
+    idempotency_key = data.get('idempotency_key')
+    if not username or not symbol or side not in {'buy', 'sell'}:
+        return jsonify({'message': 'username, symbol, and side are required'}), 400
+
+    try:
+        quantity = int(data.get('quantity'))
+        limit_price = float(data.get('limit_price'))
+    except (TypeError, ValueError):
+        return jsonify({'message': 'quantity and limit_price must be numeric'}), 400
+
+    if quantity <= 0 or limit_price <= 0:
+        return jsonify({'message': 'quantity and limit_price must be positive'}), 400
+
+    user = User.query.filter_by(username=username).first()
+    if not user:
+        return jsonify({'message': 'User not found'}), 404
+
+    if idempotency_key:
+        existing = LimitOrder.query.filter_by(user_id=user.id, account_context=f"{account_context}:{idempotency_key}").first()
+        if existing:
+            return jsonify(_serialize_limit_order(existing)), 200
+
+    order = LimitOrder(
+        user_id=user.id,
+        symbol=symbol,
+        side=side,
+        quantity=quantity,
+        limit_price=limit_price,
+        status='open',
+        account_context=f"{account_context}:{idempotency_key}" if idempotency_key else account_context,
+        filled_qty=0,
+    )
+    db.session.add(order)
+    db.session.commit()
+    return jsonify(_serialize_limit_order(order)), 201
+
+
+@app.route('/orders/limit/<int:order_id>/cancel', methods=['POST'])
+def cancel_limit_order(order_id):
+    data = request.get_json() or {}
+    username = data.get('username')
+    if not username:
+        return jsonify({'message': 'username is required'}), 400
+    user = User.query.filter_by(username=username).first()
+    if not user:
+        return jsonify({'message': 'User not found'}), 404
+    order = LimitOrder.query.filter_by(id=order_id, user_id=user.id).first()
+    if not order:
+        return jsonify({'message': 'Order not found'}), 404
+    if order.status in {'filled', 'cancelled', 'expired', 'rejected'}:
+        return jsonify(_serialize_limit_order(order)), 200
+    order.status = 'cancelled'
+    db.session.commit()
+    return jsonify(_serialize_limit_order(order))
+
+
 # ✅ Add this ABOVE the "if __name__ == '__main__'" block
 @app.route('/admin/set_admin', methods=['POST'])
 def set_admin():
@@ -1895,6 +2202,7 @@ scheduler.add_job(
     minute=35,
     timezone="America/Los_Angeles"
 )
+scheduler.add_job(func=process_open_limit_orders, trigger="interval", seconds=30)
 scheduler.start()
 # --------------------------------
 # --------------------
