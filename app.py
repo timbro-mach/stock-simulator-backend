@@ -393,6 +393,11 @@ def build_stock_overview(symbol, range_param):
     current_price = float(global_quote.get("05. price") or 0)
     prev_close_price = float(global_quote.get("08. previous close") or 0)
 
+    quote_change_value = global_quote.get("09. change")
+    quote_change_percent = global_quote.get("10. change percent")
+    if quote_change_percent is not None:
+        quote_change_percent = quote_change_percent.replace("%", "")
+
     if range_param == "1D":
         series_params = {
             "function": "TIME_SERIES_INTRADAY",
@@ -435,8 +440,12 @@ def build_stock_overview(symbol, range_param):
             prev_close_price = float(prev_close_candidates[1][1].get("4. close") or prev_close_candidates[1][1].get("5. adjusted close") or 0)
 
     range_start_price = filtered_points[0]["price"] if filtered_points else current_price
-    today_change_value = current_price - prev_close_price
-    today_change_percent = (today_change_value / prev_close_price * 100.0) if prev_close_price > 0 else None
+    if quote_change_value is not None and quote_change_percent is not None:
+        today_change_value = float(quote_change_value)
+        today_change_percent = float(quote_change_percent)
+    else:
+        today_change_value = current_price - prev_close_price
+        today_change_percent = (today_change_value / prev_close_price * 100.0) if prev_close_price > 0 else None
     range_change_value = current_price - range_start_price
     range_change_percent = (range_change_value / range_start_price * 100.0) if range_start_price > 0 else None
 
