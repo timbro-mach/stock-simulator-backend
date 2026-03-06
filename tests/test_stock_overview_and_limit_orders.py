@@ -42,6 +42,9 @@ def make_fake_get(current_price=110.0, prev_close=100.0, quote_change=None, quot
     d1 = (today - timedelta(days=1)).isoformat()
     d2 = (today - timedelta(days=2)).isoformat()
     d3 = (today - timedelta(days=3)).isoformat()
+    intraday_today_open = f"{d0} 09:35:00"
+    intraday_today_mid = f"{d0} 10:00:00"
+    intraday_yesterday_close = f"{d1} 15:55:00"
     w0 = today.isoformat()
     w1 = (today - timedelta(days=7)).isoformat()
     w2 = (today - timedelta(days=14)).isoformat()
@@ -57,8 +60,9 @@ def make_fake_get(current_price=110.0, prev_close=100.0, quote_change=None, quot
         if params and params.get("function") == "TIME_SERIES_INTRADAY":
             return FakeResponse({
                 "Time Series (5min)": {
-                    "2024-01-02 10:00:00": {"4. close": "95"},
-                    "2024-01-02 09:35:00": {"4. close": "90"},
+                    intraday_today_mid: {"4. close": "95"},
+                    intraday_today_open: {"4. close": "90"},
+                    intraday_yesterday_close: {"4. close": "89"},
                 }
             })
         if params and params.get("function") == "TIME_SERIES_DAILY_ADJUSTED":
@@ -122,6 +126,32 @@ def test_today_metrics_use_global_quote_change_fields(app_client, monkeypatch):
     assert one_year["today_change_value"] == 7.5
     assert one_year["today_change_percent"] == 6.1
 
+
+
+
+def test_one_day_range_uses_today_change_metrics(app_client, monkeypatch):
+    _, app_module = app_client
+    monkeypatch.setattr(
+        app_module.requests,
+        "get",
+        make_fake_get(current_price=123.0, prev_close=100.0, quote_change=7.5, quote_change_percent="6.10%"),
+    )
+
+    payload = app_module.build_stock_overview("AAPL", "1D")
+
+    assert payload["range_start_price"] == 100.0
+    assert payload["range_change_value"] == 7.5
+    assert payload["range_change_percent"] == 6.1
+
+
+def test_one_day_chart_points_include_only_today(app_client, monkeypatch):
+    _, app_module = app_client
+    monkeypatch.setattr(app_module.requests, "get", make_fake_get(current_price=110.0, prev_close=100.0))
+
+    payload = app_module.build_stock_overview("AAPL", "1D")
+
+    assert len(payload["chart_points"]) == 2
+    assert all(point["timestamp"].startswith(datetime.utcnow().date().isoformat()) for point in payload["chart_points"])
 
 def test_range_metrics_correctness_and_sorted_points(app_client, monkeypatch):
     _, app_module = app_client

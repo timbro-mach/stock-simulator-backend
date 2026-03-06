@@ -364,7 +364,7 @@ def _parse_chart_points(time_series):
 
 def _range_window(range_param, now_est):
     if range_param == "1D":
-        return now_est - timedelta(days=1)
+        return now_est.replace(hour=0, minute=0, second=0, microsecond=0)
     if range_param == "1W":
         return now_est - timedelta(days=7)
     if range_param == "1M":
@@ -439,15 +439,21 @@ def build_stock_overview(symbol, range_param):
         if len(prev_close_candidates) > 1:
             prev_close_price = float(prev_close_candidates[1][1].get("4. close") or prev_close_candidates[1][1].get("5. adjusted close") or 0)
 
-    range_start_price = filtered_points[0]["price"] if filtered_points else current_price
     if quote_change_value is not None and quote_change_percent is not None:
         today_change_value = float(quote_change_value)
         today_change_percent = float(quote_change_percent)
     else:
         today_change_value = current_price - prev_close_price
         today_change_percent = (today_change_value / prev_close_price * 100.0) if prev_close_price > 0 else None
-    range_change_value = current_price - range_start_price
-    range_change_percent = (range_change_value / range_start_price * 100.0) if range_start_price > 0 else None
+
+    if range_param == "1D" and prev_close_price > 0:
+        range_start_price = prev_close_price
+        range_change_value = today_change_value
+        range_change_percent = today_change_percent
+    else:
+        range_start_price = filtered_points[0]["price"] if filtered_points else current_price
+        range_change_value = current_price - range_start_price
+        range_change_percent = (range_change_value / range_start_price * 100.0) if range_start_price > 0 else None
 
     app.logger.info(
         "stock_overview_metrics symbol=%s range=%s as_of=%s current=%s prev_close=%s range_start=%s",
