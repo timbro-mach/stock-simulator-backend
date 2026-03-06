@@ -36,7 +36,7 @@ class FakeResponse:
         return self.payload
 
 
-def make_fake_get(current_price=110.0, prev_close=100.0):
+def make_fake_get(current_price=110.0, prev_close=100.0, quote_change=None, quote_change_percent=None):
     today = datetime.utcnow().date()
     d0 = today.isoformat()
     d1 = (today - timedelta(days=1)).isoformat()
@@ -48,7 +48,12 @@ def make_fake_get(current_price=110.0, prev_close=100.0):
 
     def fake_get(url, params=None, timeout=None):
         if params and params.get("function") == "GLOBAL_QUOTE":
-            return FakeResponse({"Global Quote": {"05. price": str(current_price), "08. previous close": str(prev_close)}})
+            quote = {"05. price": str(current_price), "08. previous close": str(prev_close)}
+            if quote_change is not None:
+                quote["09. change"] = str(quote_change)
+            if quote_change_percent is not None:
+                quote["10. change percent"] = str(quote_change_percent)
+            return FakeResponse({"Global Quote": quote})
         if params and params.get("function") == "TIME_SERIES_INTRADAY":
             return FakeResponse({
                 "Time Series (5min)": {
@@ -97,6 +102,25 @@ def test_today_metrics_invariant_across_ranges(app_client, monkeypatch):
 
     assert len(set(today_values)) == 1
     assert today_values[0] == (5.0, 5.0)
+
+
+
+
+def test_today_metrics_use_global_quote_change_fields(app_client, monkeypatch):
+    _, app_module = app_client
+    monkeypatch.setattr(
+        app_module.requests,
+        "get",
+        make_fake_get(current_price=123.0, prev_close=100.0, quote_change=7.5, quote_change_percent="6.10%"),
+    )
+
+    one_day = app_module.build_stock_overview("AAPL", "1D")
+    one_year = app_module.build_stock_overview("AAPL", "1Y")
+
+    assert one_day["today_change_value"] == 7.5
+    assert one_day["today_change_percent"] == 6.1
+    assert one_year["today_change_value"] == 7.5
+    assert one_year["today_change_percent"] == 6.1
 
 
 def test_range_metrics_correctness_and_sorted_points(app_client, monkeypatch):
