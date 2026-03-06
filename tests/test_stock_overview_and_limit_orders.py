@@ -261,3 +261,45 @@ def test_integration_limit_order_survives_login_session_and_cancel_path(app_clie
     app_module.process_open_limit_orders()
     historical = client.get("/orders/limit", query_string={"username": "tester"}).get_json()
     assert any(item["status"] in {"filled", "cancelled"} for item in historical)
+
+
+def test_trade_blotter_tracks_market_and_limit_trades(app_client, monkeypatch):
+    client, app_module = app_client
+    create_user(app_module)
+
+    monkeypatch.setattr(app_module, "get_current_price", lambda symbol: 100.0)
+
+    buy_resp = client.post(
+        "/buy",
+        json={"username": "tester", "symbol": "AAPL", "quantity": 2},
+    )
+    assert buy_resp.status_code == 200
+
+    create_limit = client.post(
+        "/orders/limit",
+        json={"username": "tester", "symbol": "AAPL", "side": "sell", "quantity": 1, "limit_price": 90},
+    )
+    assert create_limit.status_code == 201
+
+    app_module.process_open_limit_orders()
+
+    blotter_resp = client.get("/trades/blotter", query_string={"username": "tester"})
+    assert blotter_resp.status_code == 200
+    rows = blotter_resp.get_json()
+
+    assert len(rows) == 2
+    assert rows[0]["order_type"] == "limit"
+    assert rows[0]["side"] == "sell"
+    assert rows[1]["order_type"] == "market"
+    assert rows[1]["side"] == "buy"
+
+
+def test_trade_blotter_requires_valid_params(app_client):
+    client, app_module = app_client
+    create_user(app_module)
+
+    missing_username = client.get("/trades/blotter")
+    assert missing_username.status_code == 400
+
+    invalid_limit = client.get("/trades/blotter", query_string={"username": "tester", "limit": "abc"})
+    assert invalid_limit.status_code == 400
