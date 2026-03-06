@@ -183,6 +183,18 @@ class LimitOrder(db.Model):
     filled_qty = db.Column(db.Integer, nullable=False, default=0)
     avg_fill_price = db.Column(db.Float, nullable=True)
 
+
+class TradeBlotterEntry(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False, index=True)
+    symbol = db.Column(db.String(10), nullable=False)
+    side = db.Column(db.String(8), nullable=False)
+    quantity = db.Column(db.Integer, nullable=False)
+    price = db.Column(db.Float, nullable=False)
+    order_type = db.Column(db.String(16), nullable=False, default='market')
+    account_context = db.Column(db.String(32), nullable=False, default='global')
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+
 with app.app_context():
     db.create_all()
 
@@ -976,6 +988,7 @@ def buy_stock():
     else:
         new_hold = Holding(user_id=user.id, symbol=symbol, quantity=quantity, buy_price=price)
         db.session.add(new_hold)
+    _record_trade_blotter_entry(user.id, symbol, 'buy', quantity, price, order_type='market', account_context='global')
     db.session.commit()
     return jsonify({'message': 'Buy successful', 'cash_balance': user.cash_balance})
 
@@ -1006,6 +1019,7 @@ def sell_stock():
     if holding.quantity == 0:
         db.session.delete(holding)
     user.cash_balance += proceeds
+    _record_trade_blotter_entry(user.id, symbol, 'sell', quantity, price, order_type='market', account_context='global')
     db.session.commit()
     return jsonify({'message': 'Sell successful', 'cash_balance': user.cash_balance})
 
@@ -2038,6 +2052,32 @@ def competition_team_leaderboard(code):
 VALID_ORDER_STATUSES = {"open", "partially_filled", "filled", "cancelled", "expired", "rejected"}
 
 
+def _serialize_trade_blotter_entry(entry):
+    return {
+        "id": entry.id,
+        "symbol": entry.symbol,
+        "side": entry.side,
+        "quantity": entry.quantity,
+        "price": entry.price,
+        "order_type": entry.order_type,
+        "account_context": entry.account_context,
+        "executed_at": entry.created_at.isoformat() + "Z",
+    }
+
+
+def _record_trade_blotter_entry(user_id, symbol, side, quantity, price, order_type="market", account_context="global"):
+    entry = TradeBlotterEntry(
+        user_id=user_id,
+        symbol=symbol.upper(),
+        side=side.lower(),
+        quantity=int(quantity),
+        price=float(price),
+        order_type=order_type,
+        account_context=account_context,
+    )
+    db.session.add(entry)
+
+
 def _serialize_limit_order(order):
     return {
         "id": order.id,
@@ -2101,6 +2141,15 @@ def process_open_limit_orders():
                     if holding.quantity == 0:
                         db.session.delete(holding)
 
+                _record_trade_blotter_entry(
+                    user.id,
+                    order.symbol,
+                    order.side,
+                    fill_qty,
+                    current_price,
+                    order_type='limit',
+                    account_context=order.account_context,
+                )
                 order.filled_qty = order.quantity
                 order.avg_fill_price = current_price
                 order.status = "filled"
@@ -2126,6 +2175,26 @@ def list_limit_orders():
         query = query.filter_by(status=status)
     orders = query.order_by(LimitOrder.created_at.desc()).all()
     return jsonify([_serialize_limit_order(order) for order in orders])
+
+
+@app.route('/trades/blotter', methods=['GET'])
+def list_trade_blotter():
+    username = request.args.get('username')
+    if not username:
+        return jsonify({'message': 'username is required'}), 400
+
+    user = User.query.filter_by(username=username).first()
+    if not user:
+        return jsonify({'message': 'User not found'}), 404
+
+    limit = request.args.get('limit', 100)
+    try:
+        limit = max(1, min(int(limit), 500))
+    except (TypeError, ValueError):
+        return jsonify({'message': 'limit must be numeric'}), 400
+
+    entries = TradeBlotterEntry.query.filter_by(user_id=user.id).order_by(TradeBlotterEntry.created_at.desc()).limit(limit).all()
+    return jsonify([_serialize_trade_blotter_entry(entry) for entry in entries])
 
 
 @app.route('/orders/limit', methods=['POST'])
