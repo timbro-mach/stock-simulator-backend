@@ -2053,6 +2053,7 @@ VALID_ORDER_STATUSES = {"open", "partially_filled", "filled", "cancelled", "expi
 
 
 def _serialize_trade_blotter_entry(entry):
+    executed_at = entry.created_at.isoformat() + "Z" if entry.created_at else None
     return {
         "id": entry.id,
         "symbol": entry.symbol,
@@ -2061,7 +2062,7 @@ def _serialize_trade_blotter_entry(entry):
         "price": entry.price,
         "order_type": entry.order_type,
         "account_context": entry.account_context,
-        "executed_at": entry.created_at.isoformat() + "Z",
+        "executed_at": executed_at,
     }
 
 
@@ -2178,12 +2179,22 @@ def list_limit_orders():
 
 
 @app.route('/trades/blotter', methods=['GET'])
+@app.route('/trade-history', methods=['GET'])
 def list_trade_blotter():
     username = request.args.get('username')
-    if not username:
-        return jsonify({'message': 'username is required'}), 400
+    user_id = request.args.get('user_id') or request.args.get('userId')
 
-    user = User.query.filter_by(username=username).first()
+    user = None
+    if username:
+        user = User.query.filter_by(username=username).first()
+    elif user_id:
+        try:
+            user = db.session.get(User, int(user_id))
+        except (TypeError, ValueError):
+            return jsonify({'message': 'user_id must be numeric'}), 400
+    else:
+        return jsonify({'message': 'username or user_id is required'}), 400
+
     if not user:
         return jsonify({'message': 'User not found'}), 404
 

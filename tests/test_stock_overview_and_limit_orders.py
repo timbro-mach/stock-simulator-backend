@@ -298,8 +298,27 @@ def test_trade_blotter_requires_valid_params(app_client):
     client, app_module = app_client
     create_user(app_module)
 
-    missing_username = client.get("/trades/blotter")
-    assert missing_username.status_code == 400
+    missing_identity = client.get("/trades/blotter")
+    assert missing_identity.status_code == 400
 
     invalid_limit = client.get("/trades/blotter", query_string={"username": "tester", "limit": "abc"})
     assert invalid_limit.status_code == 400
+
+
+def test_trade_blotter_supports_trade_history_alias_and_user_id(app_client, monkeypatch):
+    client, app_module = app_client
+    create_user(app_module)
+
+    monkeypatch.setattr(app_module, "get_current_price", lambda symbol: 100.0)
+    buy_resp = client.post("/buy", json={"username": "tester", "symbol": "AAPL", "quantity": 1})
+    assert buy_resp.status_code == 200
+
+    with app_module.app.app_context():
+        user = app_module.User.query.filter_by(username="tester").first()
+        user_id = user.id
+
+    alias_resp = client.get("/trade-history", query_string={"userId": user_id})
+    assert alias_resp.status_code == 200
+    rows = alias_resp.get_json()
+    assert len(rows) == 1
+    assert rows[0]["side"] == "buy"
