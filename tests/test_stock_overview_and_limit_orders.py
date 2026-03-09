@@ -322,3 +322,32 @@ def test_trade_blotter_supports_trade_history_alias_and_user_id(app_client, monk
     rows = alias_resp.get_json()
     assert len(rows) == 1
     assert rows[0]["side"] == "buy"
+
+
+def test_trade_blotter_includes_account_field_and_competition_trades(app_client, monkeypatch):
+    client, app_module = app_client
+    create_user(app_module)
+
+    with app_module.app.app_context():
+        user = app_module.User.query.filter_by(username="tester").first()
+        comp = app_module.Competition(code="COMP1234", name="Comp", created_by=user.id)
+        app_module.db.session.add(comp)
+        app_module.db.session.flush()
+        member = app_module.CompetitionMember(competition_id=comp.id, user_id=user.id, cash_balance=100000)
+        app_module.db.session.add(member)
+        app_module.db.session.commit()
+
+    monkeypatch.setattr(app_module, "get_current_price", lambda symbol: 100.0)
+
+    buy_resp = client.post(
+        "/competition/buy",
+        json={"username": "tester", "competition_code": "COMP1234", "symbol": "AAPL", "quantity": 2},
+    )
+    assert buy_resp.status_code == 200
+
+    blotter_resp = client.get("/trades/blotter", query_string={"username": "tester"})
+    assert blotter_resp.status_code == 200
+    rows = blotter_resp.get_json()
+    assert len(rows) == 1
+    assert rows[0]["account_context"] == "competition:COMP1234"
+    assert rows[0]["account"] == "competition:COMP1234"

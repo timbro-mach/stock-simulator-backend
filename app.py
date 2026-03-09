@@ -1190,6 +1190,15 @@ def competition_buy():
         )
         db.session.add(new_holding)
 
+    _record_trade_blotter_entry(
+        user.id,
+        symbol,
+        'buy',
+        quantity,
+        price,
+        order_type='market',
+        account_context=f'competition:{competition_code}',
+    )
     db.session.commit()
     return jsonify({'message': 'Competition buy successful', 'competition_cash': member.cash_balance})
 
@@ -1248,6 +1257,15 @@ def competition_sell():
     if holding.quantity == 0:
         db.session.delete(holding)
     member.cash_balance += proceeds
+    _record_trade_blotter_entry(
+        user.id,
+        symbol,
+        'sell',
+        quantity,
+        price,
+        order_type='market',
+        account_context=f'competition:{competition_code}',
+    )
     db.session.commit()
 
     return jsonify({'message': 'Competition sell successful', 'competition_cash': member.cash_balance})
@@ -1495,6 +1513,15 @@ def competition_team_buy():
         )
         db.session.add(new_holding)
 
+    _record_trade_blotter_entry(
+        user.id,
+        symbol,
+        'buy',
+        quantity,
+        price,
+        order_type='market',
+        account_context=f'competition_team:{competition_code}:{team_id}',
+    )
     db.session.commit()
     return jsonify({
         'message': 'Competition team buy successful',
@@ -1564,6 +1591,15 @@ def competition_team_sell():
         db.session.delete(holding)
     comp_team.cash_balance += proceeds
 
+    _record_trade_blotter_entry(
+        user.id,
+        symbol,
+        'sell',
+        quantity,
+        price,
+        order_type='market',
+        account_context=f'competition_team:{competition_code}:{team_id}',
+    )
     db.session.commit()
     return jsonify({
         'message': 'Competition team sell successful',
@@ -2054,6 +2090,7 @@ VALID_ORDER_STATUSES = {"open", "partially_filled", "filled", "cancelled", "expi
 
 def _serialize_trade_blotter_entry(entry):
     executed_at = entry.created_at.isoformat() + "Z" if entry.created_at else None
+    account_context = entry.account_context or "global"
     return {
         "id": entry.id,
         "symbol": entry.symbol,
@@ -2061,7 +2098,8 @@ def _serialize_trade_blotter_entry(entry):
         "quantity": entry.quantity,
         "price": entry.price,
         "order_type": entry.order_type,
-        "account_context": entry.account_context,
+        "account_context": account_context,
+        "account": account_context,
         "executed_at": executed_at,
     }
 
