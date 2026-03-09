@@ -1190,6 +1190,15 @@ def competition_buy():
         )
         db.session.add(new_holding)
 
+    _record_trade_blotter_entry(
+        user.id,
+        symbol,
+        'buy',
+        quantity,
+        price,
+        order_type='market',
+        account_context=f'competition:{competition_code}',
+    )
     db.session.commit()
     return jsonify({'message': 'Competition buy successful', 'competition_cash': member.cash_balance})
 
@@ -1248,6 +1257,15 @@ def competition_sell():
     if holding.quantity == 0:
         db.session.delete(holding)
     member.cash_balance += proceeds
+    _record_trade_blotter_entry(
+        user.id,
+        symbol,
+        'sell',
+        quantity,
+        price,
+        order_type='market',
+        account_context=f'competition:{competition_code}',
+    )
     db.session.commit()
 
     return jsonify({'message': 'Competition sell successful', 'competition_cash': member.cash_balance})
@@ -1495,6 +1513,15 @@ def competition_team_buy():
         )
         db.session.add(new_holding)
 
+    _record_trade_blotter_entry(
+        user.id,
+        symbol,
+        'buy',
+        quantity,
+        price,
+        order_type='market',
+        account_context=f'competition_team:{competition_code}:{team_id}',
+    )
     db.session.commit()
     return jsonify({
         'message': 'Competition team buy successful',
@@ -1564,6 +1591,15 @@ def competition_team_sell():
         db.session.delete(holding)
     comp_team.cash_balance += proceeds
 
+    _record_trade_blotter_entry(
+        user.id,
+        symbol,
+        'sell',
+        quantity,
+        price,
+        order_type='market',
+        account_context=f'competition_team:{competition_code}:{team_id}',
+    )
     db.session.commit()
     return jsonify({
         'message': 'Competition team sell successful',
@@ -2053,6 +2089,8 @@ VALID_ORDER_STATUSES = {"open", "partially_filled", "filled", "cancelled", "expi
 
 
 def _serialize_trade_blotter_entry(entry):
+    executed_at = entry.created_at.isoformat() + "Z" if entry.created_at else None
+    account_context = entry.account_context or "global"
     return {
         "id": entry.id,
         "symbol": entry.symbol,
@@ -2060,8 +2098,9 @@ def _serialize_trade_blotter_entry(entry):
         "quantity": entry.quantity,
         "price": entry.price,
         "order_type": entry.order_type,
-        "account_context": entry.account_context,
-        "executed_at": entry.created_at.isoformat() + "Z",
+        "account_context": account_context,
+        "account": account_context,
+        "executed_at": executed_at,
     }
 
 
@@ -2178,12 +2217,22 @@ def list_limit_orders():
 
 
 @app.route('/trades/blotter', methods=['GET'])
+@app.route('/trade-history', methods=['GET'])
 def list_trade_blotter():
     username = request.args.get('username')
-    if not username:
-        return jsonify({'message': 'username is required'}), 400
+    user_id = request.args.get('user_id') or request.args.get('userId')
 
-    user = User.query.filter_by(username=username).first()
+    user = None
+    if username:
+        user = User.query.filter_by(username=username).first()
+    elif user_id:
+        try:
+            user = db.session.get(User, int(user_id))
+        except (TypeError, ValueError):
+            return jsonify({'message': 'user_id must be numeric'}), 400
+    else:
+        return jsonify({'message': 'username or user_id is required'}), 400
+
     if not user:
         return jsonify({'message': 'User not found'}), 404
 
