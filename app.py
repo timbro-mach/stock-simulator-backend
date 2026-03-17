@@ -598,7 +598,10 @@ def login():
 
                 competition_accounts.append({
                     "code": comp.code,
+                    "competition_code": comp.code,
                     "name": comp.name,
+                    "competition_name": comp.name,
+                    "account_type": "competition",
                     "cash_balance": m.cash_balance,
                     "portfolio": comp_portfolio,
                     "total_value": total_value,
@@ -615,6 +618,11 @@ def login():
             for ct in ct_entries:
                 comp = db.session.get(Competition, ct.competition_id)
                 if comp:
+                    team = db.session.get(Team, ct.team_id)
+                    if not team:
+                        # Skip orphaned records so legacy data cannot break account loading.
+                        continue
+                    team_name = team.name
                     ct_holdings = CompetitionTeamHolding.query.filter_by(competition_team_id=ct.id).all()
                     team_portfolio = []
                     total_holdings_value = 0
@@ -643,14 +651,23 @@ def login():
 
                     team_competitions.append({
                         "code": comp.code,
+                        "competition_code": comp.code,
                         "name": comp.name,
+                        "competition_name": comp.name,
+                        "account_type": "team_competition",
                         "cash_balance": ct.cash_balance,
                         "portfolio": team_portfolio,
                         "total_value": total_value,
                         "pnl": total_pnl,
                         "return_pct": return_pct,
                         'realized_pnl': ct.realized_pnl or 0.0,
-                        "team_id": ct.team_id
+                        "team_id": ct.team_id,
+                        "team_name": team_name,
+                        # Unified payload for rendering team+competition in one UI container.
+                        "team_competition": {
+                            "team": {"id": ct.team_id, "name": team_name},
+                            "competition": {"code": comp.code, "name": comp.name}
+                        }
                     })
 
         return jsonify({
@@ -858,7 +875,10 @@ def get_user():
 
         competition_accounts.append({
             'code': comp.code,
+            'competition_code': comp.code,
             'name': comp.name,
+            'competition_name': comp.name,
+            'account_type': 'competition',
             'cash_balance': m.cash_balance,
             'portfolio': comp_portfolio,
             'total_value': comp_total_value,
@@ -911,19 +931,34 @@ def get_user():
             team_pnl_today = team_total_value - team_start_of_day_value
             team_pnl_pct_today = (team_pnl_today / team_start_of_day_value * 100.0) if team_start_of_day_value > 0 else 0.0
 
+            team = db.session.get(Team, ct.team_id)
+            if not team:
+                # Skip orphaned records so legacy data cannot break account loading.
+                continue
+            team_name = team.name
+
             team_competitions.append({
                 'code': comp.code,
+                'competition_code': comp.code,
                 'name': comp.name,
+                'competition_name': comp.name,
+                'account_type': 'team_competition',
                 'cash_balance': ct.cash_balance,
                 'portfolio': team_portfolio,
                 'total_value': team_total_value,
                 'team_id': ct.team_id,
+                'team_name': team_name,
                 'pnl': team_total_pnl,
                 'return_pct': team_return_pct,
                 'realized_pnl': ct.realized_pnl or 0.0,
                 'start_of_day_value': team_start_of_day_value,
                 'pnl_today': team_pnl_today,
-                'pnl_pct_today': team_pnl_pct_today
+                'pnl_pct_today': team_pnl_pct_today,
+                # Unified payload for rendering team+competition in one UI container.
+                'team_competition': {
+                    'team': {'id': ct.team_id, 'name': team_name},
+                    'competition': {'code': comp.code, 'name': comp.name}
+                }
             })
 
     # --- Final Response ---
@@ -1436,13 +1471,24 @@ def team_sell():
 # --------------------
 @app.route('/competition/team/join', methods=['POST'])
 def competition_team_join():
-    data = request.get_json()
+    data = request.get_json() or {}
     username = data.get('username')
-    team_code = data.get('team_code')
-    competition_code = data.get('competition_code')
+    # Accept both `team_code` and `team_id` for compatibility with older/newer clients.
+    team_code = data.get('team_code') or data.get('team_id')
+    competition_code = data.get('competition_code') or data.get('code')
+
+    if not username or not team_code or not competition_code:
+        return jsonify({'message': 'username, team_code/team_id, and competition_code are required'}), 400
+
     user = User.query.filter_by(username=username).first()
     if not user:
         return jsonify({'message': 'User not found'}), 404
+
+    try:
+        team_code = int(team_code)
+    except (TypeError, ValueError):
+        return jsonify({'message': 'Invalid team code'}), 400
+
     team = Team.query.filter_by(id=team_code).first()
     if not team:
         return jsonify({'message': 'Team not found'}), 404
