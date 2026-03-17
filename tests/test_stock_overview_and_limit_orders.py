@@ -263,7 +263,7 @@ def test_integration_limit_order_survives_login_session_and_cancel_path(app_clie
     assert any(item["status"] in {"filled", "cancelled"} for item in historical)
 
 
-def test_user_endpoint_includes_dynamic_today_pnl_for_competition_accounts(app_client, monkeypatch):
+def test_user_endpoint_today_pnl_uses_prev_close_not_total_return(app_client, monkeypatch):
     client, app_module = app_client
 
     with app_module.app.app_context():
@@ -295,15 +295,16 @@ def test_user_endpoint_includes_dynamic_today_pnl_for_competition_accounts(app_c
         app_module.db.session.add(holding)
         app_module.db.session.commit()
 
-    monkeypatch.setattr(app_module, "get_current_price", lambda symbol: 100.0)
+    monkeypatch.setattr(app_module, "get_current_and_prev_close", lambda symbol: (100.0, 98.0))
 
     payload = client.get("/user", query_string={"username": "tester"}).get_json()
     comp = payload["competition_accounts"][0]
 
     assert comp["total_value"] == 2000.0
-    assert comp["start_of_day_value"] == 1500.0
-    assert comp["pnl_today"] == 500.0
-    assert round(comp["pnl_pct_today"], 4) == round((500.0 / 1500.0) * 100, 4)
+    assert comp["pnl"] == 125.0
+    assert comp["start_of_day_value"] == 1980.0
+    assert comp["pnl_today"] == 20.0
+    assert round(comp["pnl_pct_today"], 4) == round((20.0 / 1980.0) * 100, 4)
 
 def test_trade_blotter_tracks_market_and_limit_trades(app_client, monkeypatch):
     client, app_module = app_client

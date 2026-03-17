@@ -325,6 +325,23 @@ def get_current_price(symbol):
     return float(global_quote["05. price"])
 
 
+def get_current_and_prev_close(symbol):
+    url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={symbol}&entitlement=realtime&apikey={ALPHA_VANTAGE_API_KEY}"
+    response = requests.get(url)
+    if response.status_code != 200:
+        raise Exception(f"Alpha Vantage API error: {response.status_code}")
+    data = response.json()
+    if "Global Quote" not in data or not data["Global Quote"]:
+        raise Exception(f"No data found for symbol {symbol}")
+
+    global_quote = data["Global Quote"]
+    current_price = float(global_quote.get("05. price") or 0.0)
+    prev_close = float(global_quote.get("08. previous close") or 0.0)
+    if prev_close <= 0:
+        prev_close = current_price
+    return current_price, prev_close
+
+
 VALID_RANGES = {"1D", "1W", "1M", "6M", "1Y"}
 
 
@@ -773,16 +790,18 @@ def get_user():
     global_portfolio = []
     global_total_holdings_value = 0
     global_unrealized_pnl = 0
+    global_holdings_prev_close_value = 0
 
     for h in holdings:
         try:
-            price = get_current_price(h.symbol)
+            price, prev_close = get_current_and_prev_close(h.symbol)
         except Exception:
-            price = 0
+            price, prev_close = 0, 0
         value = price * h.quantity
         pnl = (price - h.buy_price) * h.quantity
         global_unrealized_pnl += pnl
         global_total_holdings_value += value
+        global_holdings_prev_close_value += prev_close * h.quantity
         global_portfolio.append({
             'symbol': h.symbol,
             'quantity': h.quantity,
@@ -794,7 +813,7 @@ def get_user():
     global_total_pnl = (user.realized_pnl or 0.0) + global_unrealized_pnl
     global_total_value = user.cash_balance + global_total_holdings_value
     global_return_pct = ((global_total_value - 100000.0) / 100000.0) * 100.0
-    global_start_of_day_value = user.start_of_day_value or 100000.0
+    global_start_of_day_value = user.cash_balance + global_holdings_prev_close_value
     global_pnl_today = global_total_value - global_start_of_day_value
     global_pnl_pct_today = (global_pnl_today / global_start_of_day_value * 100.0) if global_start_of_day_value > 0 else 0.0
 
@@ -810,16 +829,18 @@ def get_user():
         comp_portfolio = []
         comp_total_holdings_value = 0
         comp_unrealized_pnl = 0
+        comp_holdings_prev_close_value = 0
 
         for ch in comp_holdings:
             try:
-                price = get_current_price(ch.symbol)
+                price, prev_close = get_current_and_prev_close(ch.symbol)
             except Exception:
-                price = 0
+                price, prev_close = 0, 0
             value = price * ch.quantity
             pnl = (price - ch.buy_price) * ch.quantity
             comp_unrealized_pnl += pnl
             comp_total_holdings_value += value
+            comp_holdings_prev_close_value += prev_close * ch.quantity
             comp_portfolio.append({
                 'symbol': ch.symbol,
                 'quantity': ch.quantity,
@@ -831,7 +852,7 @@ def get_user():
         comp_total_pnl = (m.realized_pnl or 0.0) + comp_unrealized_pnl
         comp_total_value = m.cash_balance + comp_total_holdings_value
         comp_return_pct = ((comp_total_value - 100000.0) / 100000.0) * 100.0
-        comp_start_of_day_value = m.start_of_day_value or 100000.0
+        comp_start_of_day_value = m.cash_balance + comp_holdings_prev_close_value
         comp_pnl_today = comp_total_value - comp_start_of_day_value
         comp_pnl_pct_today = (comp_pnl_today / comp_start_of_day_value * 100.0) if comp_start_of_day_value > 0 else 0.0
 
@@ -863,16 +884,18 @@ def get_user():
             team_portfolio = []
             team_total_holdings_value = 0
             team_unrealized_pnl = 0
+            team_holdings_prev_close_value = 0
 
             for cht in ct_holdings:
                 try:
-                    price = get_current_price(cht.symbol)
+                    price, prev_close = get_current_and_prev_close(cht.symbol)
                 except Exception:
-                    price = 0
+                    price, prev_close = 0, 0
                 value = price * cht.quantity
                 pnl = (price - cht.buy_price) * cht.quantity
                 team_unrealized_pnl += pnl
                 team_total_holdings_value += value
+                team_holdings_prev_close_value += prev_close * cht.quantity
                 team_portfolio.append({
                     'symbol': cht.symbol,
                     'quantity': cht.quantity,
@@ -884,7 +907,7 @@ def get_user():
             team_total_pnl = (ct.realized_pnl or 0.0) + team_unrealized_pnl
             team_total_value = ct.cash_balance + team_total_holdings_value
             team_return_pct = ((team_total_value - 100000.0) / 100000.0) * 100.0
-            team_start_of_day_value = ct.start_of_day_value or 100000.0
+            team_start_of_day_value = ct.cash_balance + team_holdings_prev_close_value
             team_pnl_today = team_total_value - team_start_of_day_value
             team_pnl_pct_today = (team_pnl_today / team_start_of_day_value * 100.0) if team_start_of_day_value > 0 else 0.0
 
