@@ -2,7 +2,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import func
+from sqlalchemy import func, inspect, text
 import requests, secrets
 from datetime import datetime, timedelta, timezone
 from dateutil import tz
@@ -197,6 +197,32 @@ class TradeBlotterEntry(db.Model):
 
 with app.app_context():
     db.create_all()
+
+
+def ensure_schema_compatibility():
+    """Best-effort additive schema sync for deployments without migrations."""
+    try:
+        insp = inspect(db.engine)
+        if 'competition_team' not in insp.get_table_names():
+            return
+
+        existing_cols = {c['name'] for c in insp.get_columns('competition_team')}
+        needed = {
+            'start_of_day_value': 'DOUBLE PRECISION DEFAULT 100000.0',
+            'realized_pnl': 'DOUBLE PRECISION DEFAULT 0.0',
+        }
+        for col_name, col_type in needed.items():
+            if col_name in existing_cols:
+                continue
+            db.session.execute(text(f'ALTER TABLE competition_team ADD COLUMN {col_name} {col_type}'))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        logger.exception('Schema compatibility step failed for competition_team table')
+
+with app.app_context():
+    ensure_schema_compatibility()
+
 
 # --------------------
 # Helper Functions: Password Reset
@@ -598,7 +624,10 @@ def login():
 
                 competition_accounts.append({
                     "code": comp.code,
+                    "competition_code": comp.code,
                     "name": comp.name,
+                    "competition_name": comp.name,
+                    "account_type": "competition",
                     "cash_balance": m.cash_balance,
                     "portfolio": comp_portfolio,
                     "total_value": total_value,
@@ -615,6 +644,11 @@ def login():
             for ct in ct_entries:
                 comp = db.session.get(Competition, ct.competition_id)
                 if comp:
+                    team = db.session.get(Team, ct.team_id)
+                    if not team:
+                        # Skip orphaned records so legacy data cannot break account loading.
+                        continue
+                    team_name = team.name
                     ct_holdings = CompetitionTeamHolding.query.filter_by(competition_team_id=ct.id).all()
                     team_portfolio = []
                     total_holdings_value = 0
@@ -643,14 +677,23 @@ def login():
 
                     team_competitions.append({
                         "code": comp.code,
+                        "competition_code": comp.code,
                         "name": comp.name,
+                        "competition_name": comp.name,
+                        "account_type": "team_competition",
                         "cash_balance": ct.cash_balance,
                         "portfolio": team_portfolio,
                         "total_value": total_value,
                         "pnl": total_pnl,
                         "return_pct": return_pct,
                         'realized_pnl': ct.realized_pnl or 0.0,
-                        "team_id": ct.team_id
+                        "team_id": ct.team_id,
+                        "team_name": team_name,
+                        # Unified payload for rendering team+competition in one UI container.
+                        "team_competition": {
+                            "team": {"id": ct.team_id, "name": team_name},
+                            "competition": {"code": comp.code, "name": comp.name}
+                        }
                     })
 
         return jsonify({
@@ -858,7 +901,10 @@ def get_user():
 
         competition_accounts.append({
             'code': comp.code,
+            'competition_code': comp.code,
             'name': comp.name,
+            'competition_name': comp.name,
+            'account_type': 'competition',
             'cash_balance': m.cash_balance,
             'portfolio': comp_portfolio,
             'total_value': comp_total_value,
@@ -911,19 +957,34 @@ def get_user():
             team_pnl_today = team_total_value - team_start_of_day_value
             team_pnl_pct_today = (team_pnl_today / team_start_of_day_value * 100.0) if team_start_of_day_value > 0 else 0.0
 
+            team = db.session.get(Team, ct.team_id)
+            if not team:
+                # Skip orphaned records so legacy data cannot break account loading.
+                continue
+            team_name = team.name
+
             team_competitions.append({
                 'code': comp.code,
+                'competition_code': comp.code,
                 'name': comp.name,
+                'competition_name': comp.name,
+                'account_type': 'team_competition',
                 'cash_balance': ct.cash_balance,
                 'portfolio': team_portfolio,
                 'total_value': team_total_value,
                 'team_id': ct.team_id,
+                'team_name': team_name,
                 'pnl': team_total_pnl,
                 'return_pct': team_return_pct,
                 'realized_pnl': ct.realized_pnl or 0.0,
                 'start_of_day_value': team_start_of_day_value,
                 'pnl_today': team_pnl_today,
-                'pnl_pct_today': team_pnl_pct_today
+                'pnl_pct_today': team_pnl_pct_today,
+                # Unified payload for rendering team+competition in one UI container.
+                'team_competition': {
+                    'team': {'id': ct.team_id, 'name': team_name},
+                    'competition': {'code': comp.code, 'name': comp.name}
+                }
             })
 
     # --- Final Response ---
@@ -1156,6 +1217,7 @@ def competition_buy():
     data = request.get_json()
     username = data.get('username')
     competition_code = data.get('competition_code')
+    competition_id = data.get('competition_id')
     symbol = data.get('symbol').upper()
     quantity = int(data.get('quantity'))
 
@@ -1163,7 +1225,14 @@ def competition_buy():
     if not user:
         return jsonify({'message': 'User not found'}), 404
 
-    comp = Competition.query.filter_by(code=competition_code).first()
+    comp = None
+    if competition_id is not None:
+        try:
+            comp = db.session.get(Competition, int(competition_id))
+        except (TypeError, ValueError):
+            return jsonify({'message': 'Invalid competition id'}), 400
+    if comp is None and competition_code:
+        comp = Competition.query.filter_by(code=str(competition_code).strip()).first()
     if not comp:
         return jsonify({'message': 'Competition not found'}), 404
 
@@ -1251,6 +1320,7 @@ def competition_sell():
     data = request.get_json()
     username = data.get('username')
     competition_code = data.get('competition_code')
+    competition_id = data.get('competition_id')
     symbol = data.get('symbol')
     quantity = int(data.get('quantity'))
 
@@ -1260,7 +1330,14 @@ def competition_sell():
         return jsonify({'message': 'User not found'}), 404
 
     # 2. Find competition
-    comp = Competition.query.filter_by(code=competition_code).first()
+    comp = None
+    if competition_id is not None:
+        try:
+            comp = db.session.get(Competition, int(competition_id))
+        except (TypeError, ValueError):
+            return jsonify({'message': 'Invalid competition id'}), 400
+    if comp is None and competition_code:
+        comp = Competition.query.filter_by(code=str(competition_code).strip()).first()
     if not comp:
         return jsonify({'message': 'Competition not found'}), 404
 
@@ -1435,21 +1512,41 @@ def team_sell():
 # Endpoints for Competition Team (Teams participating in Competitions)
 # --------------------
 @app.route('/competition/team/join', methods=['POST'])
+@app.route('/competition/join_team', methods=['POST'])
 def competition_team_join():
-    data = request.get_json()
+    data = request.get_json() or {}
     username = data.get('username')
-    team_code = data.get('team_code')
-    competition_code = data.get('competition_code')
+    # Accept both `team_code` and `team_id` for compatibility with older/newer clients.
+    team_code = data.get('team_code') or data.get('team_id')
+    competition_code = data.get('competition_code') or data.get('code')
+    competition_id = data.get('competition_id')
+
+    if not username or not team_code or (not competition_code and not competition_id):
+        return jsonify({'message': 'username, team_code/team_id, and competition_code/code/competition_id are required'}), 400
+
     user = User.query.filter_by(username=username).first()
     if not user:
         return jsonify({'message': 'User not found'}), 404
+
+    try:
+        team_code = int(team_code)
+    except (TypeError, ValueError):
+        return jsonify({'message': 'Invalid team code'}), 400
+
     team = Team.query.filter_by(id=team_code).first()
     if not team:
         return jsonify({'message': 'Team not found'}), 404
     if not TeamMember.query.filter_by(team_id=team.id, user_id=user.id).first():
         return jsonify({'message': 'User is not a member of this team'}), 403
 
-    comp = Competition.query.filter_by(code=competition_code).first()
+    comp = None
+    if competition_id is not None:
+        try:
+            comp = db.session.get(Competition, int(competition_id))
+        except (TypeError, ValueError):
+            return jsonify({'message': 'Invalid competition id'}), 400
+    if comp is None and competition_code:
+        comp = Competition.query.filter_by(code=str(competition_code).strip()).first()
     if not comp:
         return jsonify({'message': 'Competition not found'}), 404
     
@@ -1466,6 +1563,7 @@ def competition_team_buy():
     data = request.get_json()
     username = data.get('username')
     competition_code = data.get('competition_code')
+    competition_id = data.get('competition_id')
     team_id = data.get('team_id')
     symbol = data.get('symbol').upper()
     quantity = int(data.get('quantity'))
@@ -1476,7 +1574,14 @@ def competition_team_buy():
         return jsonify({'message': 'User not found'}), 404
 
     # 2. Find the competition
-    comp = Competition.query.filter_by(code=competition_code).first()
+    comp = None
+    if competition_id is not None:
+        try:
+            comp = db.session.get(Competition, int(competition_id))
+        except (TypeError, ValueError):
+            return jsonify({'message': 'Invalid competition id'}), 400
+    if comp is None and competition_code:
+        comp = Competition.query.filter_by(code=str(competition_code).strip()).first()
     if not comp:
         return jsonify({'message': 'Competition not found'}), 404
 
@@ -1577,6 +1682,7 @@ def competition_team_sell():
     data = request.get_json()
     username = data.get('username')
     competition_code = data.get('competition_code')
+    competition_id = data.get('competition_id')
     team_id = data.get('team_id')
     symbol = data.get('symbol')
     quantity = int(data.get('quantity'))
@@ -1587,7 +1693,14 @@ def competition_team_sell():
         return jsonify({'message': 'User not found'}), 404
 
     # 2. Find the competition
-    comp = Competition.query.filter_by(code=competition_code).first()
+    comp = None
+    if competition_id is not None:
+        try:
+            comp = db.session.get(Competition, int(competition_id))
+        except (TypeError, ValueError):
+            return jsonify({'message': 'Invalid competition id'}), 400
+    if comp is None and competition_code:
+        comp = Competition.query.filter_by(code=str(competition_code).strip()).first()
     if not comp:
         return jsonify({'message': 'Competition not found'}), 404
 
@@ -1790,13 +1903,21 @@ def admin_update_competition_open():
     data = request.get_json()
     admin_username = data.get('admin_username')
     competition_code = data.get('competition_code')
+    competition_id = data.get('competition_id')
     is_open = data.get('is_open')
     
     admin_user = User.query.filter_by(username=admin_username).first()
     if not admin_user or not admin_user.is_admin:
         return jsonify({'message': 'Not authorized'}), 403
 
-    comp = Competition.query.filter_by(code=competition_code).first()
+    comp = None
+    if competition_id is not None:
+        try:
+            comp = db.session.get(Competition, int(competition_id))
+        except (TypeError, ValueError):
+            return jsonify({'message': 'Invalid competition id'}), 400
+    if comp is None and competition_code:
+        comp = Competition.query.filter_by(code=str(competition_code).strip()).first()
     if not comp:
         return jsonify({'message': 'Competition not found'}), 404
 
@@ -1813,6 +1934,7 @@ def admin_remove_user_from_competition():
     admin_username = data.get('admin_username')
     target_username = data.get('target_username')
     competition_code = data.get('competition_code')
+    competition_id = data.get('competition_id')
     
     # ✅ Validate admin
     admin_user = User.query.filter_by(username=admin_username).first()
@@ -1825,7 +1947,14 @@ def admin_remove_user_from_competition():
         return jsonify({'message': 'Target user not found'}), 404
 
     # ✅ Find competition
-    comp = Competition.query.filter_by(code=competition_code).first()
+    comp = None
+    if competition_id is not None:
+        try:
+            comp = db.session.get(Competition, int(competition_id))
+        except (TypeError, ValueError):
+            return jsonify({'message': 'Invalid competition id'}), 400
+    if comp is None and competition_code:
+        comp = Competition.query.filter_by(code=str(competition_code).strip()).first()
     if not comp:
         return jsonify({'message': 'Competition not found'}), 404
 
