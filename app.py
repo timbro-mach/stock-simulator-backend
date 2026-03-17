@@ -598,7 +598,10 @@ def login():
 
                 competition_accounts.append({
                     "code": comp.code,
+                    "competition_code": comp.code,
                     "name": comp.name,
+                    "competition_name": comp.name,
+                    "account_type": "competition",
                     "cash_balance": m.cash_balance,
                     "portfolio": comp_portfolio,
                     "total_value": total_value,
@@ -616,7 +619,10 @@ def login():
                 comp = db.session.get(Competition, ct.competition_id)
                 if comp:
                     team = db.session.get(Team, ct.team_id)
-                    team_name = team.name if team else None
+                    if not team:
+                        # Skip orphaned records so legacy data cannot break account loading.
+                        continue
+                    team_name = team.name
                     ct_holdings = CompetitionTeamHolding.query.filter_by(competition_team_id=ct.id).all()
                     team_portfolio = []
                     total_holdings_value = 0
@@ -645,7 +651,10 @@ def login():
 
                     team_competitions.append({
                         "code": comp.code,
+                        "competition_code": comp.code,
                         "name": comp.name,
+                        "competition_name": comp.name,
+                        "account_type": "team_competition",
                         "cash_balance": ct.cash_balance,
                         "portfolio": team_portfolio,
                         "total_value": total_value,
@@ -866,7 +875,10 @@ def get_user():
 
         competition_accounts.append({
             'code': comp.code,
+            'competition_code': comp.code,
             'name': comp.name,
+            'competition_name': comp.name,
+            'account_type': 'competition',
             'cash_balance': m.cash_balance,
             'portfolio': comp_portfolio,
             'total_value': comp_total_value,
@@ -920,11 +932,17 @@ def get_user():
             team_pnl_pct_today = (team_pnl_today / team_start_of_day_value * 100.0) if team_start_of_day_value > 0 else 0.0
 
             team = db.session.get(Team, ct.team_id)
-            team_name = team.name if team else None
+            if not team:
+                # Skip orphaned records so legacy data cannot break account loading.
+                continue
+            team_name = team.name
 
             team_competitions.append({
                 'code': comp.code,
+                'competition_code': comp.code,
                 'name': comp.name,
+                'competition_name': comp.name,
+                'account_type': 'team_competition',
                 'cash_balance': ct.cash_balance,
                 'portfolio': team_portfolio,
                 'total_value': team_total_value,

@@ -69,3 +69,46 @@ def test_competition_team_join_accepts_team_id_alias_and_user_payload_includes_u
         "team": {"id": team_id, "name": "Wolves"},
         "competition": {"code": "ABC123", "name": "Spring Cup"},
     }
+
+
+def test_login_and_user_skip_orphaned_team_records_and_keep_competition_accounts(app_client, monkeypatch):
+    client, app_module = app_client
+    create_user(app_module, username="legacy", email="legacy@example.com")
+
+    with app_module.app.app_context():
+        user = app_module.User.query.filter_by(username="legacy").first()
+        comp = app_module.Competition(code="LEG123", name="Legacy Comp", created_by=user.id)
+        app_module.db.session.add(comp)
+        app_module.db.session.flush()
+        app_module.db.session.add(app_module.CompetitionMember(user_id=user.id, competition_id=comp.id, cash_balance=100000))
+
+        # orphaned legacy team/member rows should not break login or /user responses
+        team = app_module.Team(name="Temp Team", created_by=user.id)
+        app_module.db.session.add(team)
+        app_module.db.session.flush()
+        orphan_team_id = team.id
+        app_module.db.session.add(app_module.TeamMember(team_id=orphan_team_id, user_id=user.id))
+        app_module.db.session.add(app_module.CompetitionTeam(competition_id=comp.id, team_id=orphan_team_id, cash_balance=100000))
+        app_module.db.session.commit()
+
+        # delete the team row to emulate legacy/orphaned data
+        app_module.db.session.delete(team)
+        app_module.db.session.commit()
+
+    monkeypatch.setattr(app_module, "get_current_and_prev_close", lambda symbol: (100.0, 99.0))
+
+    login_resp = client.post("/login", json={"username": "legacy", "password": "StrongPass!234"})
+    assert login_resp.status_code == 200
+    login_payload = login_resp.get_json()
+    assert len(login_payload["competition_accounts"]) == 1
+    assert login_payload["competition_accounts"][0]["competition_code"] == "LEG123"
+    assert login_payload["competition_accounts"][0]["account_type"] == "competition"
+    assert login_payload["team_competitions"] == []
+
+    user_resp = client.get("/user", query_string={"username": "legacy"})
+    assert user_resp.status_code == 200
+    payload = user_resp.get_json()
+    assert len(payload["competition_accounts"]) == 1
+    assert payload["competition_accounts"][0]["competition_code"] == "LEG123"
+    assert payload["competition_accounts"][0]["account_type"] == "competition"
+    assert payload["team_competitions"] == []
