@@ -263,6 +263,49 @@ def test_integration_limit_order_survives_login_session_and_cancel_path(app_clie
     assert any(item["status"] in {"filled", "cancelled"} for item in historical)
 
 
+def test_user_endpoint_today_pnl_uses_prev_close_not_total_return(app_client, monkeypatch):
+    client, app_module = app_client
+
+    with app_module.app.app_context():
+        user = app_module.User(username="tester", email="tester@example.com", cash_balance=50000.0, start_of_day_value=100000.0)
+        user.set_password("StrongPass!234")
+        app_module.db.session.add(user)
+        app_module.db.session.flush()
+
+        competition = app_module.Competition(code="COMP123", name="Comp", created_by=user.id)
+        app_module.db.session.add(competition)
+        app_module.db.session.flush()
+
+        member = app_module.CompetitionMember(
+            competition_id=competition.id,
+            user_id=user.id,
+            cash_balance=1000.0,
+            start_of_day_value=1500.0,
+            realized_pnl=25.0,
+        )
+        app_module.db.session.add(member)
+        app_module.db.session.flush()
+
+        holding = app_module.CompetitionHolding(
+            competition_member_id=member.id,
+            symbol="AAPL",
+            quantity=10,
+            buy_price=90.0,
+        )
+        app_module.db.session.add(holding)
+        app_module.db.session.commit()
+
+    monkeypatch.setattr(app_module, "get_current_and_prev_close", lambda symbol: (100.0, 98.0))
+
+    payload = client.get("/user", query_string={"username": "tester"}).get_json()
+    comp = payload["competition_accounts"][0]
+
+    assert comp["total_value"] == 2000.0
+    assert comp["pnl"] == 125.0
+    assert comp["start_of_day_value"] == 1980.0
+    assert comp["pnl_today"] == 20.0
+    assert round(comp["pnl_pct_today"], 4) == round((20.0 / 1980.0) * 100, 4)
+
 def test_trade_blotter_tracks_market_and_limit_trades(app_client, monkeypatch):
     client, app_module = app_client
     create_user(app_module)
