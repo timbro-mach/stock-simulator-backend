@@ -112,3 +112,51 @@ def test_login_and_user_skip_orphaned_team_records_and_keep_competition_accounts
     assert payload["competition_accounts"][0]["competition_code"] == "LEG123"
     assert payload["competition_accounts"][0]["account_type"] == "competition"
     assert payload["team_competitions"] == []
+
+
+def test_join_team_alias_route_accepts_competition_id(app_client):
+    client, app_module = app_client
+    create_user(app_module, username="aliasuser", email="alias@example.com")
+
+    with app_module.app.app_context():
+        user = app_module.User.query.filter_by(username="aliasuser").first()
+        team = app_module.Team(name="Alias Team", created_by=user.id)
+        app_module.db.session.add(team)
+        app_module.db.session.flush()
+        app_module.db.session.add(app_module.TeamMember(team_id=team.id, user_id=user.id))
+        comp = app_module.Competition(code="ALIA55", name="Alias Comp", created_by=user.id)
+        app_module.db.session.add(comp)
+        app_module.db.session.commit()
+        team_id = team.id
+        competition_id = comp.id
+
+    resp = client.post(
+        "/competition/join_team",
+        json={"username": "aliasuser", "team_id": team_id, "competition_id": competition_id},
+    )
+    assert resp.status_code == 200
+
+
+def test_schema_compatibility_adds_missing_competition_team_columns(app_client):
+    _, app_module = app_client
+    with app_module.app.app_context():
+        app_module.db.session.execute(app_module.text("DROP TABLE IF EXISTS competition_team"))
+        app_module.db.session.execute(
+            app_module.text(
+                """
+                CREATE TABLE competition_team (
+                    id INTEGER PRIMARY KEY,
+                    competition_id INTEGER NOT NULL,
+                    team_id INTEGER NOT NULL,
+                    cash_balance FLOAT
+                )
+                """
+            )
+        )
+        app_module.db.session.commit()
+
+        app_module.ensure_schema_compatibility()
+
+        cols = {c[1] for c in app_module.db.session.execute(app_module.text("PRAGMA table_info(competition_team)")).fetchall()}
+        assert "start_of_day_value" in cols
+        assert "realized_pnl" in cols
