@@ -794,6 +794,9 @@ def get_user():
     global_total_pnl = (user.realized_pnl or 0.0) + global_unrealized_pnl
     global_total_value = user.cash_balance + global_total_holdings_value
     global_return_pct = ((global_total_value - 100000.0) / 100000.0) * 100.0
+    global_start_of_day_value = user.start_of_day_value or 100000.0
+    global_pnl_today = global_total_value - global_start_of_day_value
+    global_pnl_pct_today = (global_pnl_today / global_start_of_day_value * 100.0) if global_start_of_day_value > 0 else 0.0
 
     # --- Individual Competition Accounts ---
     competition_accounts = []
@@ -828,6 +831,9 @@ def get_user():
         comp_total_pnl = (m.realized_pnl or 0.0) + comp_unrealized_pnl
         comp_total_value = m.cash_balance + comp_total_holdings_value
         comp_return_pct = ((comp_total_value - 100000.0) / 100000.0) * 100.0
+        comp_start_of_day_value = m.start_of_day_value or 100000.0
+        comp_pnl_today = comp_total_value - comp_start_of_day_value
+        comp_pnl_pct_today = (comp_pnl_today / comp_start_of_day_value * 100.0) if comp_start_of_day_value > 0 else 0.0
 
         competition_accounts.append({
             'code': comp.code,
@@ -837,7 +843,10 @@ def get_user():
             'total_value': comp_total_value,
             'pnl': comp_total_pnl,
             'return_pct': comp_return_pct,
-            'realized_pnl': m.realized_pnl or 0.0
+            'realized_pnl': m.realized_pnl or 0.0,
+            'start_of_day_value': comp_start_of_day_value,
+            'pnl_today': comp_pnl_today,
+            'pnl_pct_today': comp_pnl_pct_today
         })
 
     # --- Team Competitions ---
@@ -875,6 +884,9 @@ def get_user():
             team_total_pnl = (ct.realized_pnl or 0.0) + team_unrealized_pnl
             team_total_value = ct.cash_balance + team_total_holdings_value
             team_return_pct = ((team_total_value - 100000.0) / 100000.0) * 100.0
+            team_start_of_day_value = ct.start_of_day_value or 100000.0
+            team_pnl_today = team_total_value - team_start_of_day_value
+            team_pnl_pct_today = (team_pnl_today / team_start_of_day_value * 100.0) if team_start_of_day_value > 0 else 0.0
 
             team_competitions.append({
                 'code': comp.code,
@@ -885,7 +897,10 @@ def get_user():
                 'team_id': ct.team_id,
                 'pnl': team_total_pnl,
                 'return_pct': team_return_pct,
-                'realized_pnl': ct.realized_pnl or 0.0
+                'realized_pnl': ct.realized_pnl or 0.0,
+                'start_of_day_value': team_start_of_day_value,
+                'pnl_today': team_pnl_today,
+                'pnl_pct_today': team_pnl_pct_today
             })
 
     # --- Final Response ---
@@ -898,7 +913,10 @@ def get_user():
             'total_value': global_total_value,
             'pnl': global_total_pnl,
             'realized_pnl': user.realized_pnl,
-            'return_pct': global_return_pct
+            'return_pct': global_return_pct,
+            'start_of_day_value': global_start_of_day_value,
+            'pnl_today': global_pnl_today,
+            'pnl_pct_today': global_pnl_pct_today
         },
         'competition_accounts': competition_accounts,
         'team_competitions': team_competitions
