@@ -624,15 +624,17 @@ def _account_display_name(account_type, competition_name=None, competition_code=
     return "Account"
 
 
-VALID_ACCOUNT_TYPES = {"global", "competition", "competition_individual", "team", "team_competition"}
+VALID_ACCOUNT_TYPES = {"global", "competition", "team_competition"}
 
 
 def _normalize_account_type(raw_account_type):
     if raw_account_type is None:
         return None
     normalized = str(raw_account_type).strip().lower()
-    if normalized == "competition individual":
-        return "competition_individual"
+    if normalized in {"competition individual", "competition_individual"}:
+        return "competition"
+    if normalized == "team":
+        return "team_competition"
     return normalized
 
 
@@ -694,6 +696,149 @@ def _validate_performance_payload(data):
         "cash": cash,
         "total_pnl": total_pnl,
     }, None
+
+
+def _upsert_account_performance_snapshot_record(snapshot):
+    statement = None
+    if db.engine.dialect.name == 'postgresql':
+        statement = text(
+            """
+            INSERT INTO account_performance_history
+                (username, account_id, account_type, date, total_value, cash, total_pnl, updated_at)
+            VALUES
+                (:username, :account_id, :account_type, :date, :total_value, :cash, :total_pnl, NOW())
+            ON CONFLICT (username, account_type, account_id, date)
+            DO UPDATE SET
+                total_value = EXCLUDED.total_value,
+                cash = EXCLUDED.cash,
+                total_pnl = EXCLUDED.total_pnl,
+                updated_at = NOW()
+            """
+        )
+    elif db.engine.dialect.name == 'sqlite':
+        statement = text(
+            """
+            INSERT INTO account_performance_history
+                (username, account_id, account_type, date, total_value, cash, total_pnl, updated_at)
+            VALUES
+                (:username, :account_id, :account_type, :date, :total_value, :cash, :total_pnl, CURRENT_TIMESTAMP)
+            ON CONFLICT(username, account_type, account_id, date)
+            DO UPDATE SET
+                total_value = excluded.total_value,
+                cash = excluded.cash,
+                total_pnl = excluded.total_pnl,
+                updated_at = CURRENT_TIMESTAMP
+            """
+        )
+    else:
+        raise RuntimeError('Unsupported database dialect for upsert')
+
+    db.session.execute(statement, snapshot)
+
+
+def _calculate_holdings_value_and_unrealized(holdings, price_getter):
+    total_holdings_value = 0.0
+    unrealized_pnl = 0.0
+    for holding in holdings:
+        try:
+            price = price_getter(holding.symbol)
+        except Exception:
+            price = 0.0
+        total_holdings_value += price * holding.quantity
+        unrealized_pnl += (price - holding.buy_price) * holding.quantity
+    return total_holdings_value, unrealized_pnl
+
+
+def _generate_daily_account_snapshots(snapshot_date):
+    snapshots = []
+    cached_prices = {}
+
+    def price_getter(symbol):
+        key = symbol.upper()
+        if key not in cached_prices:
+            cached_prices[key] = get_current_price(key)
+        return cached_prices[key]
+
+    users = User.query.all()
+    for user in users:
+        holdings = Holding.query.filter_by(user_id=user.id).all()
+        holdings_value, unrealized_pnl = _calculate_holdings_value_and_unrealized(holdings, price_getter)
+        total_value = user.cash_balance + holdings_value
+        snapshots.append({
+            "username": user.username,
+            "account_id": f"global:{user.id}",
+            "account_type": "global",
+            "date": snapshot_date,
+            "total_value": total_value,
+            "cash": user.cash_balance,
+            "total_pnl": (user.realized_pnl or 0.0) + unrealized_pnl,
+        })
+
+    members = CompetitionMember.query.all()
+    for member in members:
+        user = db.session.get(User, member.user_id)
+        if not user:
+            continue
+        holdings = CompetitionHolding.query.filter_by(competition_member_id=member.id).all()
+        holdings_value, unrealized_pnl = _calculate_holdings_value_and_unrealized(holdings, price_getter)
+        total_value = member.cash_balance + holdings_value
+        snapshots.append({
+            "username": user.username,
+            "account_id": str(member.id),
+            "account_type": "competition",
+            "date": snapshot_date,
+            "total_value": total_value,
+            "cash": member.cash_balance,
+            "total_pnl": (member.realized_pnl or 0.0) + unrealized_pnl,
+        })
+
+    team_comp_entries = CompetitionTeam.query.all()
+    for ct in team_comp_entries:
+        team_members = TeamMember.query.filter_by(team_id=ct.team_id).all()
+        if not team_members:
+            continue
+        holdings = CompetitionTeamHolding.query.filter_by(competition_team_id=ct.id).all()
+        holdings_value, unrealized_pnl = _calculate_holdings_value_and_unrealized(holdings, price_getter)
+        total_value = ct.cash_balance + holdings_value
+        total_pnl = (ct.realized_pnl or 0.0) + unrealized_pnl
+
+        for tm in team_members:
+            user = db.session.get(User, tm.user_id)
+            if not user:
+                continue
+            snapshots.append({
+                "username": user.username,
+                "account_id": str(ct.id),
+                "account_type": "team_competition",
+                "date": snapshot_date,
+                "total_value": total_value,
+                "cash": ct.cash_balance,
+                "total_pnl": total_pnl,
+            })
+
+    return snapshots
+
+
+def run_daily_account_performance_snapshot_job():
+    with app.app_context():
+        eastern_tz = pytz.timezone('America/New_York')
+        snapshot_date = datetime.now(eastern_tz).date()
+        snapshots = _generate_daily_account_snapshots(snapshot_date)
+        upsert_count = 0
+        try:
+            for snapshot in snapshots:
+                _upsert_account_performance_snapshot_record(snapshot)
+                upsert_count += 1
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            app.logger.exception('Automatic daily account performance snapshot job failed')
+            return
+        app.logger.info(
+            "Automatic daily account performance snapshot job completed for %s with %s upserts",
+            snapshot_date.isoformat(),
+            upsert_count
+        )
 
 # --------------------
 # Endpoints for Registration and Login
@@ -1173,42 +1318,8 @@ def upsert_account_performance_snapshot():
     if error:
         return jsonify({'message': error}), 400
 
-    statement = None
-    if db.engine.dialect.name == 'postgresql':
-        statement = text(
-            """
-            INSERT INTO account_performance_history
-                (username, account_id, account_type, date, total_value, cash, total_pnl, updated_at)
-            VALUES
-                (:username, :account_id, :account_type, :date, :total_value, :cash, :total_pnl, NOW())
-            ON CONFLICT (username, account_type, account_id, date)
-            DO UPDATE SET
-                total_value = EXCLUDED.total_value,
-                cash = EXCLUDED.cash,
-                total_pnl = EXCLUDED.total_pnl,
-                updated_at = NOW()
-            """
-        )
-    elif db.engine.dialect.name == 'sqlite':
-        statement = text(
-            """
-            INSERT INTO account_performance_history
-                (username, account_id, account_type, date, total_value, cash, total_pnl, updated_at)
-            VALUES
-                (:username, :account_id, :account_type, :date, :total_value, :cash, :total_pnl, CURRENT_TIMESTAMP)
-            ON CONFLICT(username, account_type, account_id, date)
-            DO UPDATE SET
-                total_value = excluded.total_value,
-                cash = excluded.cash,
-                total_pnl = excluded.total_pnl,
-                updated_at = CURRENT_TIMESTAMP
-            """
-        )
-    else:
-        return jsonify({'message': 'Unsupported database dialect for upsert'}), 500
-
     try:
-        db.session.execute(statement, validated)
+        _upsert_account_performance_snapshot_record(validated)
         db.session.commit()
     except Exception as exc:
         db.session.rollback()
@@ -2862,6 +2973,15 @@ scheduler.add_job(
     hour=6,
     minute=35,
     timezone="America/Los_Angeles"
+)
+# Daily snapshot after market close using latest available end-of-day prices.
+# 5:15 PM America/New_York gives a short buffer after the 4:00 PM close.
+scheduler.add_job(
+    func=run_daily_account_performance_snapshot_job,
+    trigger="cron",
+    hour=17,
+    minute=15,
+    timezone="America/New_York"
 )
 scheduler.add_job(func=process_open_limit_orders, trigger="interval", seconds=30)
 scheduler.start()
