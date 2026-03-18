@@ -306,6 +306,62 @@ def test_user_endpoint_today_pnl_uses_prev_close_not_total_return(app_client, mo
     assert comp["pnl_today"] == 20.0
     assert round(comp["pnl_pct_today"], 4) == round((20.0 / 1980.0) * 100, 4)
 
+
+def test_user_endpoint_today_pnl_uses_quote_change_when_prev_close_is_stale(app_client, monkeypatch):
+    client, app_module = app_client
+
+    with app_module.app.app_context():
+        user = app_module.User(username="tester", email="tester@example.com", cash_balance=50000.0, start_of_day_value=100000.0)
+        user.set_password("StrongPass!234")
+        app_module.db.session.add(user)
+        app_module.db.session.flush()
+
+        competition = app_module.Competition(code="COMP999", name="Comp", created_by=user.id)
+        app_module.db.session.add(competition)
+        app_module.db.session.flush()
+
+        member = app_module.CompetitionMember(
+            competition_id=competition.id,
+            user_id=user.id,
+            cash_balance=91785.0,
+            start_of_day_value=100000.0,
+            realized_pnl=0.0,
+        )
+        app_module.db.session.add(member)
+        app_module.db.session.flush()
+
+        holding = app_module.CompetitionHolding(
+            competition_member_id=member.id,
+            symbol="BITX",
+            quantity=500,
+            buy_price=16.425,
+        )
+        app_module.db.session.add(holding)
+        app_module.db.session.commit()
+
+    def fake_get(url, params=None, timeout=None):
+        if "function=GLOBAL_QUOTE" in url and "symbol=BITX" in url:
+            return FakeResponse(
+                {
+                    "Global Quote": {
+                        "05. price": "16.45",
+                        "08. previous close": "18.07",
+                        "09. change": "0.015",
+                    }
+                }
+            )
+        raise AssertionError(f"Unexpected url {url}")
+
+    monkeypatch.setattr(app_module.requests, "get", fake_get)
+
+    payload = client.get("/user", query_string={"username": "tester"}).get_json()
+    comp = payload["competition_accounts"][0]
+
+    assert comp["total_value"] == 100010.0
+    assert round(comp["pnl_today"], 2) == 7.5
+    assert round(comp["start_of_day_value"], 2) == 100002.5
+
+
 def test_trade_blotter_tracks_market_and_limit_trades(app_client, monkeypatch):
     client, app_module = app_client
     create_user(app_module)

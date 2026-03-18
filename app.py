@@ -362,7 +362,16 @@ def get_current_and_prev_close(symbol):
 
     global_quote = data["Global Quote"]
     current_price = float(global_quote.get("05. price") or 0.0)
-    prev_close = float(global_quote.get("08. previous close") or 0.0)
+    # Prefer the quote-level change field when available. This can be more reliable than
+    # "08. previous close" around corporate actions and prevents large incorrect day P&L swings.
+    quote_change = global_quote.get("09. change")
+    if quote_change is not None and str(quote_change).strip() != "":
+        try:
+            prev_close = current_price - float(quote_change)
+        except (TypeError, ValueError):
+            prev_close = float(global_quote.get("08. previous close") or 0.0)
+    else:
+        prev_close = float(global_quote.get("08. previous close") or 0.0)
     if prev_close <= 0:
         prev_close = current_price
     return current_price, prev_close
