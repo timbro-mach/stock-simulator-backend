@@ -563,6 +563,18 @@ def build_stock_overview(symbol, range_param):
         },
     }
 
+
+def _account_display_name(account_type, competition_name=None, competition_code=None, team_name=None):
+    if account_type == "global":
+        return "Global Account"
+    if account_type == "competition":
+        return competition_name or competition_code
+    if account_type == "team_competition":
+        if team_name and (competition_name or competition_code):
+            return f"{team_name} • {competition_name or competition_code}"
+        return team_name or competition_name or competition_code
+    return "Account"
+
 # --------------------
 # Endpoints for Registration and Login
 # --------------------
@@ -623,11 +635,14 @@ def login():
                 return_pct = (total_pnl / 100000) * 100
 
                 competition_accounts.append({
+                    "account_id": m.id,
                     "code": comp.code,
                     "competition_code": comp.code,
                     "name": comp.name,
                     "competition_name": comp.name,
                     "account_type": "competition",
+                    "team_name": None,
+                    "account_display_name": _account_display_name("competition", competition_name=comp.name, competition_code=comp.code),
                     "cash_balance": m.cash_balance,
                     "portfolio": comp_portfolio,
                     "total_value": total_value,
@@ -676,11 +691,13 @@ def login():
                     return_pct = (total_pnl / 100000) * 100
 
                     team_competitions.append({
+                        "account_id": ct.id,
                         "code": comp.code,
                         "competition_code": comp.code,
                         "name": comp.name,
                         "competition_name": comp.name,
                         "account_type": "team_competition",
+                        "account_display_name": _account_display_name("team_competition", competition_name=comp.name, competition_code=comp.code, team_name=team_name),
                         "cash_balance": ct.cash_balance,
                         "portfolio": team_portfolio,
                         "total_value": total_value,
@@ -900,11 +917,14 @@ def get_user():
         comp_pnl_pct_today = (comp_pnl_today / comp_start_of_day_value * 100.0) if comp_start_of_day_value > 0 else 0.0
 
         competition_accounts.append({
+            'account_id': m.id,
             'code': comp.code,
             'competition_code': comp.code,
             'name': comp.name,
             'competition_name': comp.name,
             'account_type': 'competition',
+            'team_name': None,
+            'account_display_name': _account_display_name('competition', competition_name=comp.name, competition_code=comp.code),
             'cash_balance': m.cash_balance,
             'portfolio': comp_portfolio,
             'total_value': comp_total_value,
@@ -964,11 +984,13 @@ def get_user():
             team_name = team.name
 
             team_competitions.append({
+                'account_id': ct.id,
                 'code': comp.code,
                 'competition_code': comp.code,
                 'name': comp.name,
                 'competition_name': comp.name,
                 'account_type': 'team_competition',
+                'account_display_name': _account_display_name('team_competition', competition_name=comp.name, competition_code=comp.code, team_name=team_name),
                 'cash_balance': ct.cash_balance,
                 'portfolio': team_portfolio,
                 'total_value': team_total_value,
@@ -988,20 +1010,31 @@ def get_user():
             })
 
     # --- Final Response ---
+    global_account = {
+        'account_id': f'global:{user.id}',
+        'account_type': 'global',
+        'competition_code': None,
+        'competition_name': None,
+        'team_name': None,
+        'account_display_name': _account_display_name('global'),
+        'cash_balance': user.cash_balance,
+        'portfolio': global_portfolio,
+        'total_value': global_total_value,
+        'pnl': global_total_pnl,
+        'realized_pnl': user.realized_pnl,
+        'return_pct': global_return_pct,
+        'start_of_day_value': global_start_of_day_value,
+        'pnl_today': global_pnl_today,
+        'pnl_pct_today': global_pnl_pct_today
+    }
+
+    all_accounts = [global_account, *competition_accounts, *team_competitions]
+
     response_data = {
         'username': user.username,
         'is_admin': user.is_admin,
-        'global_account': {
-            'cash_balance': user.cash_balance,
-            'portfolio': global_portfolio,
-            'total_value': global_total_value,
-            'pnl': global_total_pnl,
-            'realized_pnl': user.realized_pnl,
-            'return_pct': global_return_pct,
-            'start_of_day_value': global_start_of_day_value,
-            'pnl_today': global_pnl_today,
-            'pnl_pct_today': global_pnl_pct_today
-        },
+        'global_account': global_account,
+        'accounts': all_accounts,
         'competition_accounts': competition_accounts,
         'team_competitions': team_competitions
     }
@@ -2020,6 +2053,8 @@ def get_all_users():
 def get_all_competitions():
     competitions = Competition.query.all()
     competitions_data = [{
+        'competition_code': comp.code,
+        'competition_name': comp.name,
         'code': comp.code,
         'name': comp.name,
         'featured': comp.featured,
@@ -2036,14 +2071,16 @@ def get_featured_competitions():
         featured = Competition.query.filter_by(featured=True).all()
         result = []
         for comp in featured:
-            if comp.end_date is None or comp.end_date >= datetime.utcnow():
-                result.append({
-                    'code': comp.code,
-                    'name': comp.name,
-                    'start_date': comp.start_date.isoformat(),
-                    'end_date': comp.end_date.isoformat() if comp.end_date else None,
-                    'is_open': comp.is_open
-                })
+            result.append({
+                'competition_code': comp.code,
+                'competition_name': comp.name,
+                'code': comp.code,
+                'name': comp.name,
+                'start_date': comp.start_date.isoformat() if comp.start_date else None,
+                'end_date': comp.end_date.isoformat() if comp.end_date else None,
+                'is_open': comp.is_open,
+                'featured': comp.featured,
+            })
         app.logger.info(f"Returning {len(result)} featured competitions")
         return jsonify(result), 200
     except Exception as e:
@@ -2261,6 +2298,7 @@ VALID_ORDER_STATUSES = {"open", "partially_filled", "filled", "cancelled", "expi
 def _serialize_trade_blotter_entry(entry):
     executed_at = entry.created_at.isoformat() + "Z" if entry.created_at else None
     account_context = entry.account_context or "global"
+    account_labels = _resolve_account_labels_for_user(entry.user_id, account_context)
     return {
         "id": entry.id,
         "symbol": entry.symbol,
@@ -2270,6 +2308,12 @@ def _serialize_trade_blotter_entry(entry):
         "order_type": entry.order_type,
         "account_context": account_context,
         "account": account_context,
+        "account_id": account_labels["account_id"],
+        "account_type": account_labels["account_type"],
+        "account_display_name": account_labels["account_display_name"],
+        "competition_code": account_labels["competition_code"],
+        "competition_name": account_labels["competition_name"],
+        "team_name": account_labels["team_name"],
         "executed_at": executed_at,
     }
 
@@ -2285,6 +2329,94 @@ def _record_trade_blotter_entry(user_id, symbol, side, quantity, price, order_ty
         account_context=account_context,
     )
     db.session.add(entry)
+
+
+def _resolve_account_labels_for_user(user_id, account_context):
+    normalized = (account_context or "global").strip()
+    default_payload = {
+        "account_id": normalized,
+        "account_type": "global",
+        "account_display_name": "Global Account",
+        "competition_code": None,
+        "competition_name": None,
+        "team_name": None,
+    }
+
+    if normalized == "global":
+        return default_payload
+
+    if normalized.startswith("competition:"):
+        competition_code = normalized.split(":", 1)[1].strip()
+        if not competition_code:
+            return default_payload
+        row = (
+            db.session.query(CompetitionMember.id, Competition.code, Competition.name)
+            .join(Competition, Competition.id == CompetitionMember.competition_id)
+            .filter(CompetitionMember.user_id == user_id, Competition.code == competition_code)
+            .first()
+        )
+        if not row:
+            return {
+                **default_payload,
+                "account_id": normalized,
+                "account_type": "competition",
+                "competition_code": competition_code,
+                "account_display_name": competition_code,
+            }
+        account_id, code, name = row
+        return {
+            "account_id": account_id,
+            "account_type": "competition",
+            "account_display_name": name or code,
+            "competition_code": code,
+            "competition_name": name,
+            "team_name": None,
+        }
+
+    if normalized.startswith("competition_team:"):
+        parts = normalized.split(":")
+        if len(parts) < 3:
+            return default_payload
+        competition_code = parts[1].strip()
+        try:
+            team_id = int(parts[2])
+        except ValueError:
+            team_id = None
+
+        row = (
+            db.session.query(CompetitionTeam.id, Competition.code, Competition.name, Team.name)
+            .join(Competition, Competition.id == CompetitionTeam.competition_id)
+            .join(Team, Team.id == CompetitionTeam.team_id)
+            .join(TeamMember, TeamMember.team_id == Team.id)
+            .filter(TeamMember.user_id == user_id)
+        )
+        if competition_code:
+            row = row.filter(Competition.code == competition_code)
+        if team_id is not None:
+            row = row.filter(Team.id == team_id)
+        row = row.first()
+
+        if not row:
+            return {
+                **default_payload,
+                "account_id": normalized,
+                "account_type": "team_competition",
+                "competition_code": competition_code or None,
+                "account_display_name": normalized,
+            }
+
+        account_id, code, comp_name, team_name = row
+        display_name = f"{team_name} • {comp_name or code}"
+        return {
+            "account_id": account_id,
+            "account_type": "team_competition",
+            "account_display_name": display_name,
+            "competition_code": code,
+            "competition_name": comp_name,
+            "team_name": team_name,
+        }
+
+    return default_payload
 
 
 def _serialize_limit_order(order):
