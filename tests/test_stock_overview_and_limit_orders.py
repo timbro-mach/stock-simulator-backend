@@ -362,6 +362,137 @@ def test_user_endpoint_today_pnl_uses_quote_change_when_prev_close_is_stale(app_
     assert round(comp["start_of_day_value"], 2) == 100002.5
 
 
+def test_user_endpoint_competition_and_team_today_pnl_ignore_trade_price_and_cash_flows(app_client, monkeypatch):
+    client, app_module = app_client
+
+    with app_module.app.app_context():
+        user = app_module.User(username="tester", email="tester@example.com", cash_balance=50000.0)
+        user.set_password("StrongPass!234")
+        app_module.db.session.add(user)
+        app_module.db.session.flush()
+
+        competition = app_module.Competition(code="CMPTEAM", name="Comp Team", created_by=user.id)
+        app_module.db.session.add(competition)
+        app_module.db.session.flush()
+
+        member = app_module.CompetitionMember(
+            competition_id=competition.id,
+            user_id=user.id,
+            cash_balance=99800.0,
+            realized_pnl=0.0,
+        )
+        app_module.db.session.add(member)
+        app_module.db.session.flush()
+        app_module.db.session.add(
+            app_module.CompetitionHolding(
+                competition_member_id=member.id,
+                symbol="AAPL",
+                quantity=10,
+                buy_price=150.0,
+            )
+        )
+
+        team = app_module.Team(name="Wolves", created_by=user.id)
+        app_module.db.session.add(team)
+        app_module.db.session.flush()
+        app_module.db.session.add(app_module.TeamMember(team_id=team.id, user_id=user.id))
+        app_module.db.session.flush()
+
+        comp_team = app_module.CompetitionTeam(
+            competition_id=competition.id,
+            team_id=team.id,
+            cash_balance=99500.0,
+            realized_pnl=0.0,
+        )
+        app_module.db.session.add(comp_team)
+        app_module.db.session.flush()
+        app_module.db.session.add(
+            app_module.CompetitionTeamHolding(
+                competition_team_id=comp_team.id,
+                symbol="MSFT",
+                quantity=5,
+                buy_price=400.0,
+            )
+        )
+        app_module.db.session.commit()
+
+    def fake_current_prev_close(symbol):
+        if symbol == "AAPL":
+            return 100.0, 98.0
+        if symbol == "MSFT":
+            return 200.0, 198.0
+        raise AssertionError(f"Unexpected symbol {symbol}")
+
+    monkeypatch.setattr(app_module, "get_current_and_prev_close", fake_current_prev_close)
+
+    payload = client.get("/user", query_string={"username": "tester"}).get_json()
+    comp = payload["competition_accounts"][0]
+    team = payload["team_competitions"][0]
+
+    assert comp["pnl_today"] == 20.0
+    assert comp["start_of_day_value"] == 100780.0
+    assert team["pnl_today"] == 10.0
+    assert team["start_of_day_value"] == 100490.0
+
+
+def test_login_payload_includes_competition_and_team_daily_pnl_fields(app_client, monkeypatch):
+    client, app_module = app_client
+
+    with app_module.app.app_context():
+        user = app_module.User(username="tester", email="tester@example.com")
+        user.set_password("StrongPass!234")
+        app_module.db.session.add(user)
+        app_module.db.session.flush()
+
+        competition = app_module.Competition(code="LOG123", name="Login Comp", created_by=user.id)
+        app_module.db.session.add(competition)
+        app_module.db.session.flush()
+
+        member = app_module.CompetitionMember(competition_id=competition.id, user_id=user.id, cash_balance=99900.0)
+        app_module.db.session.add(member)
+        app_module.db.session.flush()
+        app_module.db.session.add(
+            app_module.CompetitionHolding(
+                competition_member_id=member.id,
+                symbol="AAPL",
+                quantity=10,
+                buy_price=101.0,
+            )
+        )
+
+        team = app_module.Team(name="Sharks", created_by=user.id)
+        app_module.db.session.add(team)
+        app_module.db.session.flush()
+        app_module.db.session.add(app_module.TeamMember(team_id=team.id, user_id=user.id))
+        app_module.db.session.flush()
+
+        ct = app_module.CompetitionTeam(competition_id=competition.id, team_id=team.id, cash_balance=99800.0)
+        app_module.db.session.add(ct)
+        app_module.db.session.flush()
+        app_module.db.session.add(
+            app_module.CompetitionTeamHolding(
+                competition_team_id=ct.id,
+                symbol="MSFT",
+                quantity=5,
+                buy_price=205.0,
+            )
+        )
+        app_module.db.session.commit()
+
+    monkeypatch.setattr(
+        app_module,
+        "get_current_and_prev_close",
+        lambda symbol: (100.0, 98.0) if symbol == "AAPL" else (200.0, 198.0),
+    )
+
+    payload = client.post("/login", json={"username": "tester", "password": "StrongPass!234"}).get_json()
+
+    assert payload["competition_accounts"][0]["pnl_today"] == 20.0
+    assert payload["competition_accounts"][0]["start_of_day_value"] == 100880.0
+    assert payload["team_competitions"][0]["pnl_today"] == 10.0
+    assert payload["team_competitions"][0]["start_of_day_value"] == 100790.0
+
+
 def test_trade_blotter_tracks_market_and_limit_trades(app_client, monkeypatch):
     client, app_module = app_client
     create_user(app_module)

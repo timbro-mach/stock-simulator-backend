@@ -584,6 +584,30 @@ def _account_display_name(account_type, competition_name=None, competition_code=
         return team_name or competition_name or competition_code
     return "Account"
 
+
+def _calculate_holdings_snapshot(holdings, symbol_attr, quantity_attr):
+    total_holdings_value = 0.0
+    holdings_prev_close_value = 0.0
+    pnl_today = 0.0
+    priced_rows = []
+
+    for row in holdings:
+        symbol = getattr(row, symbol_attr)
+        quantity = getattr(row, quantity_attr)
+        try:
+            current_price, prev_close = get_current_and_prev_close(symbol)
+        except Exception:
+            current_price, prev_close = 0.0, 0.0
+
+        holding_value = current_price * quantity
+        total_holdings_value += holding_value
+        holdings_prev_close_value += prev_close * quantity
+        pnl_today += (current_price - prev_close) * quantity
+
+        priced_rows.append((row, current_price, holding_value))
+
+    return total_holdings_value, holdings_prev_close_value, pnl_today, priced_rows
+
 # --------------------
 # Endpoints for Registration and Login
 # --------------------
@@ -619,18 +643,16 @@ def login():
             if comp:
                 comp_holdings = CompetitionHolding.query.filter_by(competition_member_id=m.id).all()
                 comp_portfolio = []
-                total_holdings_value = 0
+                total_holdings_value, comp_holdings_prev_close_value, comp_pnl_today, comp_priced_holdings = _calculate_holdings_snapshot(
+                    comp_holdings,
+                    "symbol",
+                    "quantity",
+                )
                 comp_pnl = 0
 
-                for ch in comp_holdings:
-                    try:
-                        price = get_current_price(ch.symbol)
-                    except Exception:
-                        price = 0
-                    value = price * ch.quantity
+                for ch, price, value in comp_priced_holdings:
                     pnl = (price - ch.buy_price) * ch.quantity
                     comp_pnl += pnl
-                    total_holdings_value += value
                     comp_portfolio.append({
                         "symbol": ch.symbol,
                         "quantity": ch.quantity,
@@ -642,6 +664,8 @@ def login():
                 total_value = m.cash_balance + total_holdings_value
                 total_pnl = total_value - 100000
                 return_pct = (total_pnl / 100000) * 100
+                comp_start_of_day_value = m.cash_balance + comp_holdings_prev_close_value
+                comp_pnl_pct_today = (comp_pnl_today / comp_start_of_day_value * 100.0) if comp_start_of_day_value > 0 else 0.0
 
                 competition_accounts.append({
                     "account_id": m.id,
@@ -658,6 +682,9 @@ def login():
                     "pnl": total_pnl,
                     "return_pct": return_pct,
                     "realized_pnl": m.realized_pnl or 0.0,
+                    "start_of_day_value": comp_start_of_day_value,
+                    "pnl_today": comp_pnl_today,
+                    "pnl_pct_today": comp_pnl_pct_today,
                 })
 
         # --- Team Competitions ---
@@ -675,18 +702,16 @@ def login():
                     team_name = team.name
                     ct_holdings = CompetitionTeamHolding.query.filter_by(competition_team_id=ct.id).all()
                     team_portfolio = []
-                    total_holdings_value = 0
+                    total_holdings_value, team_holdings_prev_close_value, team_pnl_today, team_priced_holdings = _calculate_holdings_snapshot(
+                        ct_holdings,
+                        "symbol",
+                        "quantity",
+                    )
                     team_pnl = 0
 
-                    for cht in ct_holdings:
-                        try:
-                            price = get_current_price(cht.symbol)
-                        except Exception:
-                            price = 0
-                        value = price * cht.quantity
+                    for cht, price, value in team_priced_holdings:
                         pnl = (price - cht.buy_price) * cht.quantity
                         team_pnl += pnl
-                        total_holdings_value += value
                         team_portfolio.append({
                             "symbol": cht.symbol,
                             "quantity": cht.quantity,
@@ -698,6 +723,8 @@ def login():
                     total_value = ct.cash_balance + total_holdings_value
                     total_pnl = total_value - 100000
                     return_pct = (total_pnl / 100000) * 100
+                    team_start_of_day_value = ct.cash_balance + team_holdings_prev_close_value
+                    team_pnl_pct_today = (team_pnl_today / team_start_of_day_value * 100.0) if team_start_of_day_value > 0 else 0.0
 
                     team_competitions.append({
                         "account_id": ct.id,
@@ -713,6 +740,9 @@ def login():
                         "pnl": total_pnl,
                         "return_pct": return_pct,
                         'realized_pnl': ct.realized_pnl or 0.0,
+                        "start_of_day_value": team_start_of_day_value,
+                        "pnl_today": team_pnl_today,
+                        "pnl_pct_today": team_pnl_pct_today,
                         "team_id": ct.team_id,
                         "team_name": team_name,
                         # Unified payload for rendering team+competition in one UI container.
@@ -857,20 +887,16 @@ def get_user():
     # --- Global Account ---
     holdings = Holding.query.filter_by(user_id=user.id).all()
     global_portfolio = []
-    global_total_holdings_value = 0
+    global_total_holdings_value, global_holdings_prev_close_value, global_pnl_today, global_priced_holdings = _calculate_holdings_snapshot(
+        holdings,
+        "symbol",
+        "quantity",
+    )
     global_unrealized_pnl = 0
-    global_holdings_prev_close_value = 0
 
-    for h in holdings:
-        try:
-            price, prev_close = get_current_and_prev_close(h.symbol)
-        except Exception:
-            price, prev_close = 0, 0
-        value = price * h.quantity
+    for h, price, value in global_priced_holdings:
         pnl = (price - h.buy_price) * h.quantity
         global_unrealized_pnl += pnl
-        global_total_holdings_value += value
-        global_holdings_prev_close_value += prev_close * h.quantity
         global_portfolio.append({
             'symbol': h.symbol,
             'quantity': h.quantity,
@@ -883,7 +909,6 @@ def get_user():
     global_total_value = user.cash_balance + global_total_holdings_value
     global_return_pct = ((global_total_value - 100000.0) / 100000.0) * 100.0
     global_start_of_day_value = user.cash_balance + global_holdings_prev_close_value
-    global_pnl_today = global_total_value - global_start_of_day_value
     global_pnl_pct_today = (global_pnl_today / global_start_of_day_value * 100.0) if global_start_of_day_value > 0 else 0.0
 
     # --- Individual Competition Accounts ---
@@ -896,20 +921,16 @@ def get_user():
 
         comp_holdings = CompetitionHolding.query.filter_by(competition_member_id=m.id).all()
         comp_portfolio = []
-        comp_total_holdings_value = 0
+        comp_total_holdings_value, comp_holdings_prev_close_value, comp_pnl_today, comp_priced_holdings = _calculate_holdings_snapshot(
+            comp_holdings,
+            "symbol",
+            "quantity",
+        )
         comp_unrealized_pnl = 0
-        comp_holdings_prev_close_value = 0
 
-        for ch in comp_holdings:
-            try:
-                price, prev_close = get_current_and_prev_close(ch.symbol)
-            except Exception:
-                price, prev_close = 0, 0
-            value = price * ch.quantity
+        for ch, price, value in comp_priced_holdings:
             pnl = (price - ch.buy_price) * ch.quantity
             comp_unrealized_pnl += pnl
-            comp_total_holdings_value += value
-            comp_holdings_prev_close_value += prev_close * ch.quantity
             comp_portfolio.append({
                 'symbol': ch.symbol,
                 'quantity': ch.quantity,
@@ -922,7 +943,6 @@ def get_user():
         comp_total_value = m.cash_balance + comp_total_holdings_value
         comp_return_pct = ((comp_total_value - 100000.0) / 100000.0) * 100.0
         comp_start_of_day_value = m.cash_balance + comp_holdings_prev_close_value
-        comp_pnl_today = comp_total_value - comp_start_of_day_value
         comp_pnl_pct_today = (comp_pnl_today / comp_start_of_day_value * 100.0) if comp_start_of_day_value > 0 else 0.0
 
         competition_accounts.append({
@@ -957,20 +977,16 @@ def get_user():
 
             ct_holdings = CompetitionTeamHolding.query.filter_by(competition_team_id=ct.id).all()
             team_portfolio = []
-            team_total_holdings_value = 0
+            team_total_holdings_value, team_holdings_prev_close_value, team_pnl_today, team_priced_holdings = _calculate_holdings_snapshot(
+                ct_holdings,
+                "symbol",
+                "quantity",
+            )
             team_unrealized_pnl = 0
-            team_holdings_prev_close_value = 0
 
-            for cht in ct_holdings:
-                try:
-                    price, prev_close = get_current_and_prev_close(cht.symbol)
-                except Exception:
-                    price, prev_close = 0, 0
-                value = price * cht.quantity
+            for cht, price, value in team_priced_holdings:
                 pnl = (price - cht.buy_price) * cht.quantity
                 team_unrealized_pnl += pnl
-                team_total_holdings_value += value
-                team_holdings_prev_close_value += prev_close * cht.quantity
                 team_portfolio.append({
                     'symbol': cht.symbol,
                     'quantity': cht.quantity,
@@ -983,7 +999,6 @@ def get_user():
             team_total_value = ct.cash_balance + team_total_holdings_value
             team_return_pct = ((team_total_value - 100000.0) / 100000.0) * 100.0
             team_start_of_day_value = ct.cash_balance + team_holdings_prev_close_value
-            team_pnl_today = team_total_value - team_start_of_day_value
             team_pnl_pct_today = (team_pnl_today / team_start_of_day_value * 100.0) if team_start_of_day_value > 0 else 0.0
 
             team = db.session.get(Team, ct.team_id)
