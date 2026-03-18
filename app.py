@@ -4,7 +4,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import func, inspect, text
 import requests, secrets
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, date
 from dateutil import tz
 import logging
 logging.basicConfig(level=logging.INFO)
@@ -195,6 +195,22 @@ class TradeBlotterEntry(db.Model):
     account_context = db.Column(db.String(32), nullable=False, default='global')
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
 
+
+class AccountPerformanceHistory(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), nullable=False)
+    account_id = db.Column(db.String(80), nullable=False)
+    account_type = db.Column(db.String(32), nullable=False)
+    date = db.Column(db.Date, nullable=False)
+    total_value = db.Column(db.Float, nullable=False)
+    cash = db.Column(db.Float, nullable=False)
+    total_pnl = db.Column(db.Float, nullable=True)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow, index=True)
+    __table_args__ = (
+        db.UniqueConstraint('username', 'account_type', 'account_id', 'date', name='_account_performance_daily_uc'),
+        db.Index('ix_account_performance_lookup', 'username', 'account_type', 'account_id', 'date'),
+    )
+
 with app.app_context():
     db.create_all()
 
@@ -203,22 +219,45 @@ def ensure_schema_compatibility():
     """Best-effort additive schema sync for deployments without migrations."""
     try:
         insp = inspect(db.engine)
-        if 'competition_team' not in insp.get_table_names():
-            return
+        table_names = insp.get_table_names()
 
-        existing_cols = {c['name'] for c in insp.get_columns('competition_team')}
-        needed = {
-            'start_of_day_value': 'DOUBLE PRECISION DEFAULT 100000.0',
-            'realized_pnl': 'DOUBLE PRECISION DEFAULT 0.0',
-        }
-        for col_name, col_type in needed.items():
-            if col_name in existing_cols:
-                continue
-            db.session.execute(text(f'ALTER TABLE competition_team ADD COLUMN {col_name} {col_type}'))
+        if 'competition_team' in table_names:
+            existing_cols = {c['name'] for c in insp.get_columns('competition_team')}
+            needed = {
+                'start_of_day_value': 'DOUBLE PRECISION DEFAULT 100000.0',
+                'realized_pnl': 'DOUBLE PRECISION DEFAULT 0.0',
+            }
+            for col_name, col_type in needed.items():
+                if col_name in existing_cols:
+                    continue
+                db.session.execute(text(f'ALTER TABLE competition_team ADD COLUMN {col_name} {col_type}'))
+
+        if 'account_performance_history' in table_names:
+            existing_cols = {c['name'] for c in insp.get_columns('account_performance_history')}
+            performance_needed = {
+                'total_pnl': 'DOUBLE PRECISION',
+                'updated_at': 'TIMESTAMP',
+            }
+            for col_name, col_type in performance_needed.items():
+                if col_name in existing_cols:
+                    continue
+                db.session.execute(text(f'ALTER TABLE account_performance_history ADD COLUMN {col_name} {col_type}'))
+
+            existing_indexes = {idx['name'] for idx in insp.get_indexes('account_performance_history')}
+            if 'ix_account_performance_lookup' not in existing_indexes:
+                db.session.execute(text(
+                    'CREATE INDEX IF NOT EXISTS ix_account_performance_lookup '
+                    'ON account_performance_history (username, account_type, account_id, date)'
+                ))
+            if '_account_performance_daily_uc' not in existing_indexes:
+                db.session.execute(text(
+                    'CREATE UNIQUE INDEX IF NOT EXISTS _account_performance_daily_uc '
+                    'ON account_performance_history (username, account_type, account_id, date)'
+                ))
         db.session.commit()
     except Exception:
         db.session.rollback()
-        logger.exception('Schema compatibility step failed for competition_team table')
+        logger.exception('Schema compatibility step failed')
 
 with app.app_context():
     ensure_schema_compatibility()
@@ -583,6 +622,223 @@ def _account_display_name(account_type, competition_name=None, competition_code=
             return f"{team_name} • {competition_name or competition_code}"
         return team_name or competition_name or competition_code
     return "Account"
+
+
+VALID_ACCOUNT_TYPES = {"global", "competition", "team_competition"}
+
+
+def _normalize_account_type(raw_account_type):
+    if raw_account_type is None:
+        return None
+    normalized = str(raw_account_type).strip().lower()
+    if normalized in {"competition individual", "competition_individual"}:
+        return "competition"
+    if normalized == "team":
+        return "team_competition"
+    return normalized
+
+
+def _parse_snapshot_date(raw_date):
+    if raw_date in (None, ""):
+        return datetime.now(timezone.utc).date()
+    if isinstance(raw_date, date):
+        return raw_date
+    try:
+        return datetime.strptime(str(raw_date), "%Y-%m-%d").date()
+    except ValueError:
+        raise ValueError("date must be in YYYY-MM-DD format")
+
+
+def _validate_performance_payload(data):
+    username = (data.get("username") or "").strip()
+    account_id = str(data.get("account_id") or "").strip()
+    account_type = _normalize_account_type(data.get("account_type"))
+
+    if not username:
+        return None, "username is required"
+    if not account_id:
+        return None, "account_id is required"
+    if not account_type:
+        return None, "account_type is required"
+    if account_type not in VALID_ACCOUNT_TYPES:
+        return None, "account_type is invalid"
+
+    try:
+        snapshot_date = _parse_snapshot_date(data.get("date"))
+    except ValueError as exc:
+        return None, str(exc)
+
+    try:
+        total_value = float(data.get("total_value"))
+    except (TypeError, ValueError):
+        return None, "total_value must be numeric"
+
+    try:
+        cash = float(data.get("cash"))
+    except (TypeError, ValueError):
+        return None, "cash must be numeric"
+
+    total_pnl_raw = data.get("total_pnl")
+    if total_pnl_raw in (None, ""):
+        total_pnl = None
+    else:
+        try:
+            total_pnl = float(total_pnl_raw)
+        except (TypeError, ValueError):
+            return None, "total_pnl must be numeric when provided"
+
+    return {
+        "username": username,
+        "account_id": account_id,
+        "account_type": account_type,
+        "date": snapshot_date,
+        "total_value": total_value,
+        "cash": cash,
+        "total_pnl": total_pnl,
+    }, None
+
+
+def _upsert_account_performance_snapshot_record(snapshot):
+    statement = None
+    if db.engine.dialect.name == 'postgresql':
+        statement = text(
+            """
+            INSERT INTO account_performance_history
+                (username, account_id, account_type, date, total_value, cash, total_pnl, updated_at)
+            VALUES
+                (:username, :account_id, :account_type, :date, :total_value, :cash, :total_pnl, NOW())
+            ON CONFLICT (username, account_type, account_id, date)
+            DO UPDATE SET
+                total_value = EXCLUDED.total_value,
+                cash = EXCLUDED.cash,
+                total_pnl = EXCLUDED.total_pnl,
+                updated_at = NOW()
+            """
+        )
+    elif db.engine.dialect.name == 'sqlite':
+        statement = text(
+            """
+            INSERT INTO account_performance_history
+                (username, account_id, account_type, date, total_value, cash, total_pnl, updated_at)
+            VALUES
+                (:username, :account_id, :account_type, :date, :total_value, :cash, :total_pnl, CURRENT_TIMESTAMP)
+            ON CONFLICT(username, account_type, account_id, date)
+            DO UPDATE SET
+                total_value = excluded.total_value,
+                cash = excluded.cash,
+                total_pnl = excluded.total_pnl,
+                updated_at = CURRENT_TIMESTAMP
+            """
+        )
+    else:
+        raise RuntimeError('Unsupported database dialect for upsert')
+
+    db.session.execute(statement, snapshot)
+
+
+def _calculate_holdings_value_and_unrealized(holdings, price_getter):
+    total_holdings_value = 0.0
+    unrealized_pnl = 0.0
+    for holding in holdings:
+        try:
+            price = price_getter(holding.symbol)
+        except Exception:
+            price = 0.0
+        total_holdings_value += price * holding.quantity
+        unrealized_pnl += (price - holding.buy_price) * holding.quantity
+    return total_holdings_value, unrealized_pnl
+
+
+def _generate_daily_account_snapshots(snapshot_date):
+    snapshots = []
+    cached_prices = {}
+
+    def price_getter(symbol):
+        key = symbol.upper()
+        if key not in cached_prices:
+            cached_prices[key] = get_current_price(key)
+        return cached_prices[key]
+
+    users = User.query.all()
+    for user in users:
+        holdings = Holding.query.filter_by(user_id=user.id).all()
+        holdings_value, unrealized_pnl = _calculate_holdings_value_and_unrealized(holdings, price_getter)
+        total_value = user.cash_balance + holdings_value
+        snapshots.append({
+            "username": user.username,
+            "account_id": f"global:{user.id}",
+            "account_type": "global",
+            "date": snapshot_date,
+            "total_value": total_value,
+            "cash": user.cash_balance,
+            "total_pnl": (user.realized_pnl or 0.0) + unrealized_pnl,
+        })
+
+    members = CompetitionMember.query.all()
+    for member in members:
+        user = db.session.get(User, member.user_id)
+        if not user:
+            continue
+        holdings = CompetitionHolding.query.filter_by(competition_member_id=member.id).all()
+        holdings_value, unrealized_pnl = _calculate_holdings_value_and_unrealized(holdings, price_getter)
+        total_value = member.cash_balance + holdings_value
+        snapshots.append({
+            "username": user.username,
+            "account_id": str(member.id),
+            "account_type": "competition",
+            "date": snapshot_date,
+            "total_value": total_value,
+            "cash": member.cash_balance,
+            "total_pnl": (member.realized_pnl or 0.0) + unrealized_pnl,
+        })
+
+    team_comp_entries = CompetitionTeam.query.all()
+    for ct in team_comp_entries:
+        team_members = TeamMember.query.filter_by(team_id=ct.team_id).all()
+        if not team_members:
+            continue
+        holdings = CompetitionTeamHolding.query.filter_by(competition_team_id=ct.id).all()
+        holdings_value, unrealized_pnl = _calculate_holdings_value_and_unrealized(holdings, price_getter)
+        total_value = ct.cash_balance + holdings_value
+        total_pnl = (ct.realized_pnl or 0.0) + unrealized_pnl
+
+        for tm in team_members:
+            user = db.session.get(User, tm.user_id)
+            if not user:
+                continue
+            snapshots.append({
+                "username": user.username,
+                "account_id": str(ct.id),
+                "account_type": "team_competition",
+                "date": snapshot_date,
+                "total_value": total_value,
+                "cash": ct.cash_balance,
+                "total_pnl": total_pnl,
+            })
+
+    return snapshots
+
+
+def run_daily_account_performance_snapshot_job():
+    with app.app_context():
+        eastern_tz = pytz.timezone('America/New_York')
+        snapshot_date = datetime.now(eastern_tz).date()
+        snapshots = _generate_daily_account_snapshots(snapshot_date)
+        upsert_count = 0
+        try:
+            for snapshot in snapshots:
+                _upsert_account_performance_snapshot_record(snapshot)
+                upsert_count += 1
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            app.logger.exception('Automatic daily account performance snapshot job failed')
+            return
+        app.logger.info(
+            "Automatic daily account performance snapshot job completed for %s with %s upserts",
+            snapshot_date.isoformat(),
+            upsert_count
+        )
 
 # --------------------
 # Endpoints for Registration and Login
@@ -1049,6 +1305,78 @@ def get_user():
     }
 
     return jsonify(response_data)
+
+
+# --------------------
+# Account Performance History Endpoints
+# --------------------
+@app.route('/account/performance/snapshot', methods=['POST'])
+@app.route('/account/performance', methods=['POST'])
+def upsert_account_performance_snapshot():
+    data = request.get_json() or {}
+    validated, error = _validate_performance_payload(data)
+    if error:
+        return jsonify({'message': error}), 400
+
+    try:
+        _upsert_account_performance_snapshot_record(validated)
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        app.logger.exception('Failed to upsert performance snapshot')
+        return jsonify({'message': f'Failed to persist performance snapshot: {str(exc)}'}), 500
+
+    return jsonify({
+        'message': 'Performance snapshot upserted successfully',
+        'snapshot': {
+            'username': validated['username'],
+            'account_id': validated['account_id'],
+            'account_type': validated['account_type'],
+            'date': validated['date'].isoformat(),
+            'total_value': validated['total_value'],
+            'cash': validated['cash'],
+            'total_pnl': validated['total_pnl'],
+        }
+    }), 200
+
+
+@app.route('/account/performance/history', methods=['GET'])
+@app.route('/account/performance', methods=['GET'])
+def get_account_performance_history():
+    username = (request.args.get('username') or '').strip()
+    account_id = str(request.args.get('account_id') or '').strip()
+    account_type = _normalize_account_type(request.args.get('account_type'))
+
+    if not username:
+        return jsonify({'message': 'username is required'}), 400
+    if not account_id:
+        return jsonify({'message': 'account_id is required'}), 400
+    if not account_type:
+        return jsonify({'message': 'account_type is required'}), 400
+    if account_type not in VALID_ACCOUNT_TYPES:
+        return jsonify({'message': 'account_type is invalid'}), 400
+
+    rows = (
+        AccountPerformanceHistory.query
+        .filter_by(username=username, account_id=account_id, account_type=account_type)
+        .order_by(AccountPerformanceHistory.date.asc())
+        .all()
+    )
+
+    history = [{
+        'date': row.date.isoformat(),
+        'total_value': row.total_value,
+        'cash': row.cash,
+        'total_pnl': row.total_pnl,
+        'updated_at': row.updated_at.isoformat() if row.updated_at else None,
+    } for row in rows]
+
+    return jsonify({
+        'username': username,
+        'account_id': account_id,
+        'account_type': account_type,
+        'history': history
+    }), 200
 
 
 # --------------------
@@ -2645,6 +2973,15 @@ scheduler.add_job(
     hour=6,
     minute=35,
     timezone="America/Los_Angeles"
+)
+# Daily snapshot after market close using latest available end-of-day prices.
+# 5:15 PM America/New_York gives a short buffer after the 4:00 PM close.
+scheduler.add_job(
+    func=run_daily_account_performance_snapshot_job,
+    trigger="cron",
+    hour=17,
+    minute=15,
+    timezone="America/New_York"
 )
 scheduler.add_job(func=process_open_limit_orders, trigger="interval", seconds=30)
 scheduler.start()
