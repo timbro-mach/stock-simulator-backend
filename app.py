@@ -110,6 +110,58 @@ class Competition(db.Model):
     max_position_limit = db.Column(db.String(10), nullable=True)
     is_open = db.Column(db.Boolean, default=True)  # True for open; False for restricted
 
+class Curriculum(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    competition_id = db.Column(db.Integer, db.ForeignKey('competition.id'), nullable=False, unique=True, index=True)
+    enabled = db.Column(db.Boolean, nullable=False, default=False)
+    total_weeks = db.Column(db.Integer, nullable=False)
+    start_date = db.Column(db.DateTime, nullable=False)
+    end_date = db.Column(db.DateTime, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+class CurriculumModule(db.Model):
+    __tablename__ = 'curriculum_module'
+    id = db.Column(db.Integer, primary_key=True)
+    curriculum_id = db.Column(db.Integer, db.ForeignKey('curriculum.id'), nullable=False, index=True)
+    week_number = db.Column(db.Integer, nullable=False)
+    title = db.Column(db.String(255), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    unlock_date = db.Column(db.DateTime, nullable=False)
+    due_date = db.Column(db.DateTime, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    __table_args__ = (db.UniqueConstraint('curriculum_id', 'week_number', name='_curriculum_week_uc'),)
+
+class CurriculumAssignment(db.Model):
+    __tablename__ = 'curriculum_assignment'
+    id = db.Column(db.Integer, primary_key=True)
+    module_id = db.Column(db.Integer, db.ForeignKey('curriculum_module.id'), nullable=False, index=True)
+    type = db.Column(db.String(32), nullable=False)  # quiz | assignment | exam
+    title = db.Column(db.String(255), nullable=False)
+    content_json = db.Column(db.JSON, nullable=False)
+    answer_key_json = db.Column(db.JSON, nullable=True)
+    points = db.Column(db.Integer, nullable=False, default=100)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+class CurriculumSubmission(db.Model):
+    __tablename__ = 'curriculum_submission'
+    id = db.Column(db.Integer, primary_key=True)
+    assignment_id = db.Column(db.Integer, db.ForeignKey('curriculum_assignment.id'), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False, index=True)
+    competition_id = db.Column(db.Integer, db.ForeignKey('competition.id'), nullable=False, index=True)
+    answers_json = db.Column(db.JSON, nullable=False)
+    score = db.Column(db.Float, nullable=False, default=0.0)
+    percentage = db.Column(db.Float, nullable=False, default=0.0)
+    submitted_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    auto_graded = db.Column(db.Boolean, nullable=False, default=False)
+    feedback_json = db.Column(db.JSON, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    # Duplicate submission rule: keep one active submission per user per assignment and overwrite on re-submit.
+    __table_args__ = (db.UniqueConstraint('assignment_id', 'user_id', name='_curriculum_assignment_user_uc'),)
+
 class CompetitionMember(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     competition_id = db.Column(db.Integer, db.ForeignKey('competition.id'), nullable=False)
@@ -284,6 +336,272 @@ def is_password_strong(password):
     categories += any(c.isdigit() for c in password)
     categories += any(not c.isalnum() for c in password)
     return categories >= 3
+
+
+BASE_CURRICULUM_TOPICS = [
+    ("Introduction to Investing and Markets", "Market structure, asset classes, and long-term investing principles."),
+    ("Risk and Return", "Return drivers, volatility, drawdowns, and risk-adjusted thinking."),
+    ("Diversification", "Correlation, concentration risk, and portfolio diversification approaches."),
+    ("Asset Allocation", "Strategic vs tactical allocation and matching risk profile to goals."),
+    ("Stocks, ETFs, and Funds", "Vehicle selection, liquidity, fees, and exposure design."),
+    ("Fundamental Analysis", "Business quality, valuation basics, and financial statement signals."),
+    ("Technical Analysis", "Trend, momentum, support/resistance, and practical chart interpretation."),
+    ("Behavioral Finance", "Cognitive biases, decision hygiene, and process over prediction."),
+    ("Portfolio Construction", "Position sizing, rebalancing, and constraints management."),
+    ("Market Events, Macroeconomics, and Review", "Rates, inflation, events, and integrated review."),
+]
+
+
+def _parse_iso_date(value, field_name):
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d")
+    except ValueError:
+        raise ValueError(f"Invalid {field_name}. Expected YYYY-MM-DD format.")
+
+
+def _validate_curriculum_window(total_weeks, start_date, end_date):
+    if total_weeks is None:
+        raise ValueError("curriculumWeeks is required when curriculumEnabled is true.")
+    try:
+        total_weeks = int(total_weeks)
+    except (TypeError, ValueError):
+        raise ValueError("curriculumWeeks must be an integer.")
+    if total_weeks < 1:
+        raise ValueError("curriculumWeeks must be at least 1.")
+    if not start_date or not end_date:
+        raise ValueError("curriculumStartDate and curriculumEndDate are required when curriculumEnabled is true.")
+    if end_date < start_date:
+        raise ValueError("curriculumEndDate cannot be before curriculumStartDate.")
+    return total_weeks
+
+
+def _build_curriculum_topics(total_weeks):
+    if total_weeks <= len(BASE_CURRICULUM_TOPICS):
+        topics = []
+        base_count = len(BASE_CURRICULUM_TOPICS)
+        for i in range(total_weeks):
+            start_idx = int(i * base_count / total_weeks)
+            end_idx = int((i + 1) * base_count / total_weeks) - 1
+            if end_idx < start_idx:
+                end_idx = start_idx
+            slice_topics = BASE_CURRICULUM_TOPICS[start_idx:end_idx + 1]
+            title = " + ".join([t[0] for t in slice_topics[:2]]) if len(slice_topics) > 1 else slice_topics[0][0]
+            description = " ".join([t[1] for t in slice_topics])
+            topics.append((title, description))
+        return topics
+
+    topics = list(BASE_CURRICULUM_TOPICS)
+    advanced_topics = [
+        ("Sector Rotation and Relative Strength", "Comparing sectors, cycle positioning, and tactical tilts."),
+        ("Earnings and Event-Driven Strategy", "Interpreting earnings quality and event risk management."),
+        ("Risk Management Playbook", "Stops, hedging concepts, and downside scenario planning."),
+        ("Factor Investing and Style Premia", "Value, quality, momentum, and multi-factor blends."),
+        ("Case Study Portfolio Lab", "Structured case analysis and thesis defense with evidence."),
+        ("Strategy Review and Reflection", "Performance attribution, mistakes log, and process upgrades."),
+    ]
+    for i in range(total_weeks - len(BASE_CURRICULUM_TOPICS)):
+        topics.append(advanced_topics[i % len(advanced_topics)])
+    return topics
+
+
+def _build_module_schedule(total_weeks, start_date, end_date):
+    total_seconds = max((end_date - start_date).total_seconds(), 0)
+    module_span = total_seconds / total_weeks if total_weeks else 0
+    schedule = []
+    for idx in range(total_weeks):
+        unlock = start_date + timedelta(seconds=module_span * idx)
+        due = start_date + timedelta(seconds=module_span * (idx + 1))
+        if idx == total_weeks - 1 or due > end_date:
+            due = end_date
+        if due < unlock:
+            due = unlock
+        schedule.append((unlock, due))
+    return schedule
+
+
+def _quiz_content_for_module(module_title):
+    questions = [
+        {
+            "id": "q1",
+            "prompt": f"In {module_title}, which concept best supports disciplined investing?",
+            "choices": ["Diversification", "All-in single stock bets", "Ignoring risk", "Timing every top"],
+            "correctAnswer": "Diversification",
+        },
+        {
+            "id": "q2",
+            "prompt": "Which metric is directly tied to percentage return?",
+            "choices": ["(Ending Value - Starting Value) / Starting Value", "Only absolute dollars", "Share count only", "Ticker symbol"],
+            "correctAnswer": "(Ending Value - Starting Value) / Starting Value",
+        },
+    ]
+    return {
+        "instructions": "Select the best answer for each question.",
+        "questions": [{"id": q["id"], "prompt": q["prompt"], "choices": q["choices"]} for q in questions],
+    }, {"questions": {q["id"]: q["correctAnswer"] for q in questions}}
+
+
+def _assignment_content_for_module(module_title):
+    return {
+        "instructions": f"Write a short applied response for {module_title}.",
+        "questions": [
+            {
+                "id": "a1",
+                "prompt": "Describe one investment decision you would make and justify it using course concepts.",
+            }
+        ],
+        "rubricHints": ["Use evidence", "Address risk", "Explain trade-offs"],
+    }
+
+
+def generate_curriculum_for_competition(competition_id, total_weeks, start_date, end_date, overwrite=False):
+    competition = db.session.get(Competition, competition_id)
+    if not competition:
+        raise ValueError("Competition not found.")
+
+    curriculum = Curriculum.query.filter_by(competition_id=competition_id).first()
+    if curriculum and not overwrite and CurriculumModule.query.filter_by(curriculum_id=curriculum.id).first():
+        raise ValueError("Curriculum already generated for this competition.")
+
+    if curriculum and overwrite:
+        module_ids = [m.id for m in CurriculumModule.query.filter_by(curriculum_id=curriculum.id).all()]
+        if module_ids:
+            CurriculumSubmission.query.filter(CurriculumSubmission.assignment_id.in_(
+                db.session.query(CurriculumAssignment.id).filter(CurriculumAssignment.module_id.in_(module_ids))
+            )).delete(synchronize_session=False)
+            CurriculumAssignment.query.filter(CurriculumAssignment.module_id.in_(module_ids)).delete(synchronize_session=False)
+        CurriculumModule.query.filter_by(curriculum_id=curriculum.id).delete(synchronize_session=False)
+    if not curriculum:
+        curriculum = Curriculum(
+            competition_id=competition_id,
+            enabled=True,
+            total_weeks=total_weeks,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        db.session.add(curriculum)
+        db.session.flush()
+    else:
+        curriculum.enabled = True
+        curriculum.total_weeks = total_weeks
+        curriculum.start_date = start_date
+        curriculum.end_date = end_date
+
+    topics = _build_curriculum_topics(total_weeks)
+    schedule = _build_module_schedule(total_weeks, start_date, end_date)
+    for week in range(1, total_weeks + 1):
+        title, description = topics[week - 1]
+        unlock_date, due_date = schedule[week - 1]
+        module = CurriculumModule(
+            curriculum_id=curriculum.id,
+            week_number=week,
+            title=f"Week {week}: {title}",
+            description=description,
+            unlock_date=unlock_date,
+            due_date=due_date,
+        )
+        db.session.add(module)
+        db.session.flush()
+
+        quiz_content, quiz_answer_key = _quiz_content_for_module(module.title)
+        db.session.add(CurriculumAssignment(
+            module_id=module.id,
+            type="quiz",
+            title=f"{module.title} Quiz",
+            content_json=quiz_content,
+            answer_key_json=quiz_answer_key,
+            points=10,
+        ))
+
+        db.session.add(CurriculumAssignment(
+            module_id=module.id,
+            type="assignment",
+            title=f"{module.title} Applied Assignment",
+            content_json=_assignment_content_for_module(module.title),
+            answer_key_json=None,
+            points=20,
+        ))
+
+        if week == total_weeks:
+            exam_content, exam_answer_key = _quiz_content_for_module("Final Exam")
+            db.session.add(CurriculumAssignment(
+                module_id=module.id,
+                type="exam",
+                title="Final Cumulative Exam",
+                content_json=exam_content,
+                answer_key_json=exam_answer_key,
+                points=30,
+            ))
+
+    db.session.flush()
+    return curriculum
+
+
+def _is_competition_instructor(user, competition):
+    return bool(user and competition and (user.is_admin or competition.created_by == user.id))
+
+
+def _compute_grade_summary(competition_id, user_id):
+    curriculum = Curriculum.query.filter_by(competition_id=competition_id, enabled=True).first()
+    if not curriculum:
+        return None
+    modules = CurriculumModule.query.filter_by(curriculum_id=curriculum.id).order_by(CurriculumModule.week_number.asc()).all()
+    module_ids = [m.id for m in modules]
+    assignments = []
+    if module_ids:
+        assignments = CurriculumAssignment.query.filter(CurriculumAssignment.module_id.in_(module_ids)).all()
+    assignment_map = {a.id: a for a in assignments}
+    submission_rows = []
+    if assignment_map:
+        submission_rows = CurriculumSubmission.query.filter(
+            CurriculumSubmission.user_id == user_id,
+            CurriculumSubmission.assignment_id.in_(assignment_map.keys())
+        ).all()
+    submission_by_assignment = {s.assignment_id: s for s in submission_rows}
+    items = []
+    total_possible = 0
+    total_scored = 0.0
+    for module in modules:
+        module_assignments = [a for a in assignments if a.module_id == module.id]
+        for assignment in module_assignments:
+            sub = submission_by_assignment.get(assignment.id)
+            points_earned = sub.score if sub else 0.0
+            total_scored += points_earned
+            total_possible += assignment.points
+            items.append({
+                "moduleId": module.id,
+                "moduleWeek": module.week_number,
+                "assignmentId": assignment.id,
+                "assignmentType": assignment.type,
+                "title": assignment.title,
+                "pointsPossible": assignment.points,
+                "pointsEarned": points_earned,
+                "percentage": sub.percentage if sub else 0.0,
+                "submittedAt": sub.submitted_at.isoformat() if sub else None,
+                "submissionStatus": "submitted" if sub else "missing",
+            })
+    overall_pct = (total_scored / total_possible * 100.0) if total_possible else 0.0
+    if overall_pct >= 90:
+        letter = "A"
+    elif overall_pct >= 80:
+        letter = "B"
+    elif overall_pct >= 70:
+        letter = "C"
+    elif overall_pct >= 60:
+        letter = "D"
+    else:
+        letter = "F"
+    return {
+        "curriculumId": curriculum.id,
+        "competitionId": competition_id,
+        "userId": user_id,
+        "totalPointsEarned": round(total_scored, 2),
+        "totalPointsPossible": total_possible,
+        "percentage": round(overall_pct, 2),
+        "letterGrade": letter,
+        "items": items,
+    }
 
 def send_reset_email(recipient_email, reset_url, expires_minutes):
     tenant_id = os.getenv("MS_TENANT_ID")
@@ -1529,6 +1847,10 @@ def create_competition():
     max_position_limit = data.get('max_position_limit')
     feature_competition = data.get('feature_competition', False)
     is_open = data.get('is_open', True)
+    curriculum_enabled = bool(data.get('curriculumEnabled', False))
+    curriculum_weeks = data.get('curriculumWeeks')
+    curriculum_start_date_str = data.get('curriculumStartDate')
+    curriculum_end_date_str = data.get('curriculumEndDate')
     user = User.query.filter_by(username=username).first()
     if not user:
         return jsonify({'message': 'User not found'}), 404
@@ -1537,6 +1859,13 @@ def create_competition():
         code = secrets.token_hex(4)
     start_date = datetime.strptime(start_date_str, "%Y-%m-%d") if start_date_str else None
     end_date = datetime.strptime(end_date_str, "%Y-%m-%d") if end_date_str else None
+    if curriculum_enabled:
+        try:
+            curriculum_start_date = _parse_iso_date(curriculum_start_date_str, "curriculumStartDate")
+            curriculum_end_date = _parse_iso_date(curriculum_end_date_str, "curriculumEndDate")
+            curriculum_weeks = _validate_curriculum_window(curriculum_weeks, curriculum_start_date, curriculum_end_date)
+        except ValueError as exc:
+            return jsonify({'message': str(exc)}), 400
     comp = Competition(
         code=code, 
         name=competition_name, 
@@ -1548,6 +1877,15 @@ def create_competition():
         is_open=is_open
     )
     db.session.add(comp)
+    db.session.flush()
+    if curriculum_enabled:
+        generate_curriculum_for_competition(
+            competition_id=comp.id,
+            total_weeks=curriculum_weeks,
+            start_date=curriculum_start_date,
+            end_date=curriculum_end_date,
+            overwrite=False,
+        )
     db.session.commit()
     return jsonify({'message': 'Competition created successfully', 'competition_code': code})
 
@@ -1580,6 +1918,267 @@ def join_competition():
     db.session.commit()
 
     return jsonify({"message": f"Successfully joined {comp.name}!"}), 200
+
+
+@app.route('/curriculum/competition/<int:competition_id>/generate', methods=['POST'])
+def curriculum_generate(competition_id):
+    data = request.get_json() or {}
+    username = data.get('username')
+    user = User.query.filter_by(username=username).first() if username else None
+    competition = db.session.get(Competition, competition_id)
+    if not competition:
+        return jsonify({"message": "Competition not found"}), 404
+    if not _is_competition_instructor(user, competition):
+        return jsonify({"message": "Instructor access required"}), 403
+    try:
+        total_weeks = _validate_curriculum_window(
+            data.get("curriculumWeeks"),
+            _parse_iso_date(data.get("curriculumStartDate"), "curriculumStartDate"),
+            _parse_iso_date(data.get("curriculumEndDate"), "curriculumEndDate"),
+        )
+        curriculum = generate_curriculum_for_competition(
+            competition_id=competition_id,
+            total_weeks=total_weeks,
+            start_date=_parse_iso_date(data.get("curriculumStartDate"), "curriculumStartDate"),
+            end_date=_parse_iso_date(data.get("curriculumEndDate"), "curriculumEndDate"),
+            overwrite=bool(data.get("overwrite", False)),
+        )
+        db.session.commit()
+        return jsonify({"message": "Curriculum generated", "curriculumId": curriculum.id}), 201
+    except ValueError as exc:
+        db.session.rollback()
+        return jsonify({"message": str(exc)}), 400
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({"message": f"Failed to generate curriculum: {str(exc)}"}), 500
+
+
+@app.route('/curriculum/competition/<int:competition_id>', methods=['GET'])
+def curriculum_summary(competition_id):
+    curriculum = Curriculum.query.filter_by(competition_id=competition_id, enabled=True).first()
+    if not curriculum:
+        return jsonify({"message": "Curriculum not enabled for this competition"}), 404
+    module_count = CurriculumModule.query.filter_by(curriculum_id=curriculum.id).count()
+    assignment_count = db.session.query(CurriculumAssignment).join(
+        CurriculumModule, CurriculumAssignment.module_id == CurriculumModule.id
+    ).filter(CurriculumModule.curriculum_id == curriculum.id).count()
+    return jsonify({
+        "curriculumId": curriculum.id,
+        "competitionId": competition_id,
+        "enabled": curriculum.enabled,
+        "totalWeeks": curriculum.total_weeks,
+        "startDate": curriculum.start_date.date().isoformat(),
+        "endDate": curriculum.end_date.date().isoformat(),
+        "moduleCount": module_count,
+        "assignmentCount": assignment_count,
+    })
+
+
+@app.route('/curriculum/competition/<int:competition_id>/modules', methods=['GET'])
+def curriculum_modules(competition_id):
+    curriculum = Curriculum.query.filter_by(competition_id=competition_id, enabled=True).first()
+    if not curriculum:
+        return jsonify({"message": "Curriculum not enabled for this competition"}), 404
+    modules = CurriculumModule.query.filter_by(curriculum_id=curriculum.id).order_by(CurriculumModule.week_number.asc()).all()
+    payload = []
+    for module in modules:
+        assignments = CurriculumAssignment.query.filter_by(module_id=module.id).all()
+        payload.append({
+            "moduleId": module.id,
+            "weekNumber": module.week_number,
+            "title": module.title,
+            "description": module.description,
+            "unlockDate": module.unlock_date.isoformat(),
+            "dueDate": module.due_date.isoformat(),
+            "assignments": [{
+                "assignmentId": a.id,
+                "type": a.type,
+                "title": a.title,
+                "points": a.points,
+                "content": a.content_json,
+            } for a in assignments]
+        })
+    return jsonify(payload)
+
+
+@app.route('/curriculum/competition/<int:competition_id>/grades/<int:user_id>', methods=['GET'])
+def curriculum_grades(competition_id, user_id):
+    requester = request.args.get("username")
+    requesting_user = User.query.filter_by(username=requester).first() if requester else None
+    competition = db.session.get(Competition, competition_id)
+    if not competition:
+        return jsonify({"message": "Competition not found"}), 404
+    if not requesting_user:
+        return jsonify({"message": "Requesting user not found"}), 404
+    if requesting_user.id != user_id and not _is_competition_instructor(requesting_user, competition):
+        return jsonify({"message": "Forbidden"}), 403
+
+    summary = _compute_grade_summary(competition_id, user_id)
+    if summary is None:
+        return jsonify({"message": "Curriculum not enabled for this competition"}), 404
+    return jsonify(summary)
+
+
+@app.route('/curriculum/assignments/<int:assignment_id>/submissions', methods=['POST'])
+def curriculum_submit_assignment(assignment_id):
+    data = request.get_json() or {}
+    username = data.get("username")
+    answers = data.get("answers", {})
+    user = User.query.filter_by(username=username).first() if username else None
+    if not user:
+        return jsonify({"message": "User not found"}), 404
+    assignment = db.session.get(CurriculumAssignment, assignment_id)
+    if not assignment:
+        return jsonify({"message": "Assignment not found"}), 404
+    module = db.session.get(CurriculumModule, assignment.module_id)
+    curriculum = db.session.get(Curriculum, module.curriculum_id) if module else None
+    if not module or not curriculum or not curriculum.enabled:
+        return jsonify({"message": "Curriculum not enabled for this assignment"}), 404
+
+    # optional membership guard for students
+    membership = CompetitionMember.query.filter_by(competition_id=curriculum.competition_id, user_id=user.id).first()
+    comp = db.session.get(Competition, curriculum.competition_id)
+    if not membership and not _is_competition_instructor(user, comp):
+        return jsonify({"message": "User is not a member of this competition"}), 403
+
+    score = 0.0
+    auto_graded = False
+    feedback = {"lateSubmission": datetime.utcnow() > module.due_date}
+    if assignment.type in ("quiz", "exam"):
+        answer_key = (assignment.answer_key_json or {}).get("questions", {})
+        total_questions = max(len(answer_key), 1)
+        correct = 0
+        for qid, expected in answer_key.items():
+            if answers.get(qid) == expected:
+                correct += 1
+        score = assignment.points * (correct / total_questions)
+        auto_graded = True
+        feedback["correct"] = correct
+        feedback["totalQuestions"] = len(answer_key)
+    else:
+        # Placeholder grading for short-response assignments: completion-based.
+        # Keeps architecture ready for richer rubric/AI grading later.
+        has_content = bool(answers)
+        score = assignment.points if has_content else 0.0
+        auto_graded = has_content
+        feedback["gradingMode"] = "completion_based_placeholder"
+
+    percentage = (score / assignment.points * 100.0) if assignment.points else 0.0
+    submission = CurriculumSubmission.query.filter_by(assignment_id=assignment_id, user_id=user.id).first()
+    if not submission:
+        submission = CurriculumSubmission(
+            assignment_id=assignment_id,
+            user_id=user.id,
+            competition_id=curriculum.competition_id,
+            answers_json=answers,
+        )
+        db.session.add(submission)
+    submission.answers_json = answers
+    submission.score = round(score, 2)
+    submission.percentage = round(percentage, 2)
+    submission.submitted_at = datetime.utcnow()
+    submission.auto_graded = auto_graded
+    submission.feedback_json = feedback
+    db.session.commit()
+
+    return jsonify({
+        "assignmentId": assignment_id,
+        "userId": user.id,
+        "score": submission.score,
+        "pointsPossible": assignment.points,
+        "percentage": submission.percentage,
+        "autoGraded": submission.auto_graded,
+        "submittedAt": submission.submitted_at.isoformat(),
+        "feedback": submission.feedback_json,
+    })
+
+
+@app.route('/curriculum/assignments/<int:assignment_id>/submissions/<int:user_id>', methods=['GET'])
+def curriculum_get_submission(assignment_id, user_id):
+    requester = request.args.get("username")
+    requesting_user = User.query.filter_by(username=requester).first() if requester else None
+    if not requesting_user:
+        return jsonify({"message": "Requesting user not found"}), 404
+    assignment = db.session.get(CurriculumAssignment, assignment_id)
+    if not assignment:
+        return jsonify({"message": "Assignment not found"}), 404
+    module = db.session.get(CurriculumModule, assignment.module_id)
+    curriculum = db.session.get(Curriculum, module.curriculum_id) if module else None
+    competition = db.session.get(Competition, curriculum.competition_id) if curriculum else None
+    if not curriculum or not competition:
+        return jsonify({"message": "Curriculum not found"}), 404
+    if requesting_user.id != user_id and not _is_competition_instructor(requesting_user, competition):
+        return jsonify({"message": "Forbidden"}), 403
+    submission = CurriculumSubmission.query.filter_by(assignment_id=assignment_id, user_id=user_id).first()
+    if not submission:
+        return jsonify({"message": "Submission not found"}), 404
+    return jsonify({
+        "assignmentId": assignment_id,
+        "userId": user_id,
+        "answers": submission.answers_json,
+        "score": submission.score,
+        "percentage": submission.percentage,
+        "submittedAt": submission.submitted_at.isoformat(),
+        "autoGraded": submission.auto_graded,
+        "feedback": submission.feedback_json,
+    })
+
+
+@app.route('/curriculum/competition/<int:competition_id>/instructor-overview', methods=['GET'])
+def curriculum_instructor_overview(competition_id):
+    requester = request.args.get("username")
+    user = User.query.filter_by(username=requester).first() if requester else None
+    competition = db.session.get(Competition, competition_id)
+    if not competition:
+        return jsonify({"message": "Competition not found"}), 404
+    if not _is_competition_instructor(user, competition):
+        return jsonify({"message": "Instructor access required"}), 403
+    curriculum = Curriculum.query.filter_by(competition_id=competition_id, enabled=True).first()
+    if not curriculum:
+        return jsonify({"message": "Curriculum not enabled for this competition"}), 404
+    modules = CurriculumModule.query.filter_by(curriculum_id=curriculum.id).all()
+    module_ids = [m.id for m in modules]
+    assignments = CurriculumAssignment.query.filter(CurriculumAssignment.module_id.in_(module_ids)).all() if module_ids else []
+    assignment_ids = [a.id for a in assignments]
+    member_ids = [m.user_id for m in CompetitionMember.query.filter_by(competition_id=competition_id).all()]
+    submissions = CurriculumSubmission.query.filter(
+        CurriculumSubmission.assignment_id.in_(assignment_ids),
+        CurriculumSubmission.user_id.in_(member_ids)
+    ).all() if assignment_ids and member_ids else []
+
+    points_possible_per_user = sum(a.points for a in assignments)
+    by_user = {}
+    for uid in member_ids:
+        by_user[uid] = {"earned": 0.0, "submitted": 0}
+    for sub in submissions:
+        by_user[sub.user_id]["earned"] += sub.score
+        by_user[sub.user_id]["submitted"] += 1
+
+    student_rows = []
+    for uid in member_ids:
+        user_obj = db.session.get(User, uid)
+        earned = by_user[uid]["earned"]
+        submitted = by_user[uid]["submitted"]
+        pct = (earned / points_possible_per_user * 100.0) if points_possible_per_user else 0.0
+        completion = (submitted / len(assignments) * 100.0) if assignments else 0.0
+        student_rows.append({
+            "userId": uid,
+            "username": user_obj.username if user_obj else f"user-{uid}",
+            "percentage": round(pct, 2),
+            "completionRate": round(completion, 2),
+        })
+
+    class_avg = round(sum(row["percentage"] for row in student_rows) / len(student_rows), 2) if student_rows else 0.0
+    class_completion = round(sum(row["completionRate"] for row in student_rows) / len(student_rows), 2) if student_rows else 0.0
+    return jsonify({
+        "competitionId": competition_id,
+        "curriculumId": curriculum.id,
+        "students": student_rows,
+        "classAveragePercentage": class_avg,
+        "classCompletionRate": class_completion,
+        "totalAssignments": len(assignments),
+        "totalStudents": len(member_ids),
+    })
 
 
 @app.route('/competition/buy', methods=['POST'])
