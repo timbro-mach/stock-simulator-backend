@@ -603,6 +603,22 @@ def _compute_grade_summary(competition_id, user_id):
         "items": items,
     }
 
+
+def _resolve_curriculum_competition_id(raw_competition_id):
+    competition = db.session.get(Competition, raw_competition_id)
+    if competition:
+        return competition.id
+
+    competition_member = db.session.get(CompetitionMember, raw_competition_id)
+    if competition_member:
+        return competition_member.competition_id
+
+    competition_team = db.session.get(CompetitionTeam, raw_competition_id)
+    if competition_team:
+        return competition_team.competition_id
+
+    return raw_competition_id
+
 def send_reset_email(recipient_email, reset_url, expires_minutes):
     tenant_id = os.getenv("MS_TENANT_ID")
     client_id = os.getenv("MS_CLIENT_ID")
@@ -1955,7 +1971,8 @@ def curriculum_generate(competition_id):
 
 @app.route('/curriculum/competition/<int:competition_id>', methods=['GET'])
 def curriculum_summary(competition_id):
-    curriculum = Curriculum.query.filter_by(competition_id=competition_id, enabled=True).first()
+    resolved_competition_id = _resolve_curriculum_competition_id(competition_id)
+    curriculum = Curriculum.query.filter_by(competition_id=resolved_competition_id, enabled=True).first()
     if not curriculum:
         return jsonify({"message": "Curriculum not enabled for this competition"}), 404
     module_count = CurriculumModule.query.filter_by(curriculum_id=curriculum.id).count()
@@ -1964,7 +1981,7 @@ def curriculum_summary(competition_id):
     ).filter(CurriculumModule.curriculum_id == curriculum.id).count()
     return jsonify({
         "curriculumId": curriculum.id,
-        "competitionId": competition_id,
+        "competitionId": resolved_competition_id,
         "enabled": curriculum.enabled,
         "totalWeeks": curriculum.total_weeks,
         "startDate": curriculum.start_date.date().isoformat(),
@@ -1976,7 +1993,8 @@ def curriculum_summary(competition_id):
 
 @app.route('/curriculum/competition/<int:competition_id>/modules', methods=['GET'])
 def curriculum_modules(competition_id):
-    curriculum = Curriculum.query.filter_by(competition_id=competition_id, enabled=True).first()
+    resolved_competition_id = _resolve_curriculum_competition_id(competition_id)
+    curriculum = Curriculum.query.filter_by(competition_id=resolved_competition_id, enabled=True).first()
     if not curriculum:
         return jsonify({"message": "Curriculum not enabled for this competition"}), 404
     modules = CurriculumModule.query.filter_by(curriculum_id=curriculum.id).order_by(CurriculumModule.week_number.asc()).all()
@@ -2005,7 +2023,8 @@ def curriculum_modules(competition_id):
 def curriculum_grades(competition_id, user_id):
     requester = request.args.get("username")
     requesting_user = User.query.filter_by(username=requester).first() if requester else None
-    competition = db.session.get(Competition, competition_id)
+    resolved_competition_id = _resolve_curriculum_competition_id(competition_id)
+    competition = db.session.get(Competition, resolved_competition_id)
     if not competition:
         return jsonify({"message": "Competition not found"}), 404
     if not requesting_user:
@@ -2013,7 +2032,7 @@ def curriculum_grades(competition_id, user_id):
     if requesting_user.id != user_id and not _is_competition_instructor(requesting_user, competition):
         return jsonify({"message": "Forbidden"}), 403
 
-    summary = _compute_grade_summary(competition_id, user_id)
+    summary = _compute_grade_summary(resolved_competition_id, user_id)
     if summary is None:
         return jsonify({"message": "Curriculum not enabled for this competition"}), 404
     return jsonify(summary)
