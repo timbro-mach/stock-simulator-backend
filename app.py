@@ -361,6 +361,13 @@ def _parse_iso_date(value, field_name):
         raise ValueError(f"Invalid {field_name}. Expected YYYY-MM-DD format.")
 
 
+def _first_present(data, *keys, default=None):
+    for key in keys:
+        if key in data and data.get(key) is not None:
+            return data.get(key)
+    return default
+
+
 def _validate_curriculum_window(total_weeks, start_date, end_date):
     if total_weeks is None:
         raise ValueError("curriculumWeeks is required when curriculumEnabled is true.")
@@ -536,6 +543,25 @@ def generate_curriculum_for_competition(competition_id, total_weeks, start_date,
 
     db.session.flush()
     return curriculum
+
+
+def _delete_curriculum_for_competition(competition_id):
+    curriculum = Curriculum.query.filter_by(competition_id=competition_id).first()
+    if not curriculum:
+        return
+
+    module_ids = [m.id for m in CurriculumModule.query.filter_by(curriculum_id=curriculum.id).all()]
+    if module_ids:
+        assignment_ids = [a.id for a in CurriculumAssignment.query.filter(CurriculumAssignment.module_id.in_(module_ids)).all()]
+        if assignment_ids:
+            CurriculumSubmission.query.filter(
+                CurriculumSubmission.assignment_id.in_(assignment_ids)
+            ).delete(synchronize_session=False)
+        CurriculumAssignment.query.filter(
+            CurriculumAssignment.module_id.in_(module_ids)
+        ).delete(synchronize_session=False)
+    CurriculumModule.query.filter_by(curriculum_id=curriculum.id).delete(synchronize_session=False)
+    db.session.delete(curriculum)
 
 
 def _is_competition_instructor(user, competition):
@@ -1863,10 +1889,10 @@ def create_competition():
     max_position_limit = data.get('max_position_limit')
     feature_competition = data.get('feature_competition', False)
     is_open = data.get('is_open', True)
-    curriculum_enabled = bool(data.get('curriculumEnabled', False))
-    curriculum_weeks = data.get('curriculumWeeks')
-    curriculum_start_date_str = data.get('curriculumStartDate')
-    curriculum_end_date_str = data.get('curriculumEndDate')
+    curriculum_enabled = bool(_first_present(data, 'curriculumEnabled', 'curriculum_enabled', default=False))
+    curriculum_weeks = _first_present(data, 'curriculumWeeks', 'curriculum_weeks')
+    curriculum_start_date_str = _first_present(data, 'curriculumStartDate', 'curriculum_start_date')
+    curriculum_end_date_str = _first_present(data, 'curriculumEndDate', 'curriculum_end_date')
     user = User.query.filter_by(username=username).first()
     if not user:
         return jsonify({'message': 'User not found'}), 404
@@ -2792,6 +2818,8 @@ def admin_delete_competition():
         return jsonify({'message': 'Competition not found'}), 404
 
     try:
+        _delete_curriculum_for_competition(comp.id)
+
         # --- Remove all related members & holdings ---
         CompetitionHolding.query.filter(
             CompetitionHolding.competition_member_id.in_(
