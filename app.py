@@ -645,6 +645,37 @@ def _resolve_curriculum_competition_id(raw_competition_id):
 
     return raw_competition_id
 
+
+def _serialize_competition_identity(competition):
+    curriculum = Curriculum.query.filter_by(competition_id=competition.id).first()
+    curriculum_enabled = bool(curriculum and curriculum.enabled)
+    payload = {
+        "id": competition.id,
+        "competition_id": competition.id,
+        "code": competition.code,
+        "competition_code": competition.code,
+        "name": competition.name,
+        "competition_name": competition.name,
+        "start_date": competition.start_date.isoformat() if competition.start_date else None,
+        "end_date": competition.end_date.isoformat() if competition.end_date else None,
+        "featured": competition.featured,
+        "is_open": competition.is_open,
+        "curriculum_enabled": curriculum_enabled,
+        "curriculumEnabled": curriculum_enabled,
+    }
+    if curriculum:
+        payload.update({
+            "curriculum_id": curriculum.id,
+            "curriculumId": curriculum.id,
+            "curriculum_weeks": curriculum.total_weeks,
+            "curriculumWeeks": curriculum.total_weeks,
+            "curriculum_start_date": curriculum.start_date.date().isoformat(),
+            "curriculumStartDate": curriculum.start_date.date().isoformat(),
+            "curriculum_end_date": curriculum.end_date.date().isoformat(),
+            "curriculumEndDate": curriculum.end_date.date().isoformat(),
+        })
+    return payload
+
 def send_reset_email(recipient_email, reset_url, expires_minutes):
     tenant_id = os.getenv("MS_TENANT_ID")
     client_id = os.getenv("MS_CLIENT_ID")
@@ -2786,14 +2817,7 @@ def admin_get_competitions():
         return jsonify({'message': 'Not authorized'}), 403
 
     competitions = Competition.query.all()
-    data = [{
-        'code': c.code,
-        'name': c.name,
-        'start_date': c.start_date.isoformat() if c.start_date else None,
-        'end_date': c.end_date.isoformat() if c.end_date else None,
-        'featured': c.featured,
-        'is_open': c.is_open
-    } for c in competitions]
+    data = [_serialize_competition_identity(c) for c in competitions]
     return jsonify(data)
 
 
@@ -3035,15 +3059,16 @@ def get_all_users():
 @app.route('/competitions', methods=['GET'])
 def get_all_competitions():
     competitions = Competition.query.all()
-    competitions_data = [{
-        'competition_code': comp.code,
-        'competition_name': comp.name,
-        'code': comp.code,
-        'name': comp.name,
-        'featured': comp.featured,
-        'is_open': comp.is_open
-    } for comp in competitions]
+    competitions_data = [_serialize_competition_identity(comp) for comp in competitions]
     return jsonify(competitions_data)
+
+
+@app.route('/competition/by_code/<string:competition_code>', methods=['GET'])
+def get_competition_by_code(competition_code):
+    competition = Competition.query.filter_by(code=str(competition_code).strip()).first()
+    if not competition:
+        return jsonify({'message': 'Competition not found'}), 404
+    return jsonify(_serialize_competition_identity(competition)), 200
 
 # --------------------
 # Featured Competitions Endpoint (updated)
@@ -3054,16 +3079,7 @@ def get_featured_competitions():
         featured = Competition.query.filter_by(featured=True).all()
         result = []
         for comp in featured:
-            result.append({
-                'competition_code': comp.code,
-                'competition_name': comp.name,
-                'code': comp.code,
-                'name': comp.name,
-                'start_date': comp.start_date.isoformat() if comp.start_date else None,
-                'end_date': comp.end_date.isoformat() if comp.end_date else None,
-                'is_open': comp.is_open,
-                'featured': comp.featured,
-            })
+            result.append(_serialize_competition_identity(comp))
         app.logger.info(f"Returning {len(result)} featured competitions")
         return jsonify(result), 200
     except Exception as e:
