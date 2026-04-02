@@ -1004,9 +1004,10 @@ def _resolve_curriculum_competition_id(raw_competition_id):
     return raw_competition_id
 
 
-def _serialize_competition_identity(competition):
+def _serialize_competition_identity(competition, requesting_user=None):
     curriculum = Curriculum.query.filter_by(competition_id=competition.id).first()
     curriculum_enabled = bool(curriculum and curriculum.enabled)
+    is_instructor = _is_competition_instructor(requesting_user, competition)
     payload = {
         "id": competition.id,
         "competition_id": competition.id,
@@ -1031,6 +1032,7 @@ def _serialize_competition_identity(competition):
         "curriculumStartDate": None,
         "curriculum_end_date": None,
         "curriculumEndDate": None,
+        "is_instructor_for_competition": is_instructor,
     }
     if curriculum:
         payload.update({
@@ -1044,6 +1046,113 @@ def _serialize_competition_identity(competition):
             "curriculumEndDate": curriculum.end_date.date().isoformat(),
         })
     return payload
+
+
+def _resolve_submission_competition_id(raw_competition_id):
+    if raw_competition_id is None:
+        return None
+    try:
+        parsed = int(raw_competition_id)
+    except (TypeError, ValueError):
+        return None
+    return _resolve_curriculum_competition_id(parsed)
+
+
+def _extract_quiz_selected_value(answer_row):
+    if not isinstance(answer_row, dict):
+        return None
+    return _first_present(
+        answer_row,
+        "selectedChoice",
+        "selected_choice",
+        "selected",
+        "answer",
+        "value",
+    )
+
+
+def _normalize_submission_answers(assignment, answers):
+    assignment_type = (assignment.type or "").lower()
+    normalized_answers = []
+
+    if isinstance(answers, dict):
+        for raw_question_id, raw_value in answers.items():
+            if assignment_type in ("quiz", "exam"):
+                selected = raw_value
+                if isinstance(raw_value, dict):
+                    selected = _extract_quiz_selected_value(raw_value)
+                normalized_answers.append({
+                    "questionId": str(raw_question_id),
+                    "selectedChoice": selected,
+                })
+            else:
+                if isinstance(raw_value, dict) and isinstance(raw_value.get("parts"), list):
+                    parts = []
+                    for idx, part in enumerate(raw_value.get("parts"), start=1):
+                        if isinstance(part, dict):
+                            part_id = _first_present(part, "partId", "part_id") or f"part-{idx}"
+                            part_response = _first_present(part, "response", "answer", "value")
+                        else:
+                            part_id = f"part-{idx}"
+                            part_response = str(part)
+                        parts.append({"partId": str(part_id), "response": part_response})
+                    normalized_answers.append({"questionId": str(raw_question_id), "parts": parts})
+                else:
+                    response_text = _first_present(raw_value, "response", "answer", "value") if isinstance(raw_value, dict) else raw_value
+                    normalized_answers.append({"questionId": str(raw_question_id), "response": response_text})
+    elif isinstance(answers, list):
+        for idx, answer_row in enumerate(answers, start=1):
+            if not isinstance(answer_row, dict):
+                raise ValueError("Each answer entry must be an object.")
+            question_id = _first_present(answer_row, "questionId", "question_id", "id")
+            if question_id in (None, ""):
+                raise ValueError("Each answer entry must include questionId.")
+            if assignment_type in ("quiz", "exam"):
+                selected = _extract_quiz_selected_value(answer_row)
+                if selected is None:
+                    raise ValueError("Quiz answers must include selectedChoice (or alias selected/answer/value).")
+                normalized_answers.append({"questionId": str(question_id), "selectedChoice": selected})
+            else:
+                parts = answer_row.get("parts")
+                if parts is not None:
+                    if not isinstance(parts, list) or not parts:
+                        raise ValueError("Written multipart answers must include a non-empty parts array.")
+                    normalized_parts = []
+                    for p_idx, part in enumerate(parts, start=1):
+                        if not isinstance(part, dict):
+                            raise ValueError("Each parts entry must be an object with response.")
+                        part_id = _first_present(part, "partId", "part_id") or f"part-{p_idx}"
+                        part_response = _first_present(part, "response", "answer", "value")
+                        if part_response is None:
+                            raise ValueError("Each parts entry must include response.")
+                        normalized_parts.append({"partId": str(part_id), "response": part_response})
+                    normalized_answers.append({"questionId": str(question_id), "parts": normalized_parts})
+                else:
+                    response_text = _first_present(answer_row, "response", "answer", "value")
+                    if response_text is None:
+                        raise ValueError("Written answers must include response or parts[].")
+                    normalized_answers.append({"questionId": str(question_id), "response": response_text})
+    else:
+        raise ValueError("answers must be an object map or an array of answer entries.")
+
+    if not normalized_answers:
+        raise ValueError("answers cannot be empty.")
+    return {"answers": normalized_answers}
+
+
+def _quiz_answer_map_from_submission(answers_json):
+    if isinstance(answers_json, dict) and isinstance(answers_json.get("answers"), list):
+        mapped = {}
+        for row in answers_json.get("answers") or []:
+            if isinstance(row, dict):
+                qid = row.get("questionId")
+                selected = _first_present(row, "selectedChoice", "selected_choice", "selected", "answer", "value")
+                if qid not in (None, "") and selected is not None:
+                    mapped[str(qid)] = selected
+        return mapped
+    if isinstance(answers_json, dict):
+        return {str(k): v for k, v in answers_json.items()}
+    return {}
 
 def send_reset_email(recipient_email, reset_url, expires_minutes):
     tenant_id = os.getenv("MS_TENANT_ID")
@@ -1661,6 +1770,7 @@ def login():
 
                 competition_accounts.append({
                     "account_id": m.id,
+                    "competition_id": comp.id,
                     "code": comp.code,
                     "competition_code": comp.code,
                     "name": comp.name,
@@ -1674,6 +1784,7 @@ def login():
                     "pnl": total_pnl,
                     "return_pct": return_pct,
                     "realized_pnl": m.realized_pnl or 0.0,
+                    "is_instructor_for_competition": _is_competition_instructor(user, comp),
                 })
 
         # --- Team Competitions ---
@@ -1717,6 +1828,7 @@ def login():
 
                     team_competitions.append({
                         "account_id": ct.id,
+                        "competition_id": comp.id,
                         "code": comp.code,
                         "competition_code": comp.code,
                         "name": comp.name,
@@ -1731,6 +1843,7 @@ def login():
                         'realized_pnl': ct.realized_pnl or 0.0,
                         "team_id": ct.team_id,
                         "team_name": team_name,
+                        "is_instructor_for_competition": _is_competition_instructor(user, comp),
                         # Unified payload for rendering team+competition in one UI container.
                         "team_competition": {
                             "team": {"id": ct.team_id, "name": team_name},
@@ -1943,6 +2056,7 @@ def get_user():
 
         competition_accounts.append({
             'account_id': m.id,
+            'competition_id': comp.id,
             'code': comp.code,
             'competition_code': comp.code,
             'name': comp.name,
@@ -1959,6 +2073,8 @@ def get_user():
             'start_of_day_value': comp_start_of_day_value,
             'pnl_today': comp_pnl_today,
             'pnl_pct_today': comp_pnl_pct_today
+            ,
+            'is_instructor_for_competition': _is_competition_instructor(user, comp)
         })
 
     # --- Team Competitions ---
@@ -2010,6 +2126,7 @@ def get_user():
 
             team_competitions.append({
                 'account_id': ct.id,
+                'competition_id': comp.id,
                 'code': comp.code,
                 'competition_code': comp.code,
                 'name': comp.name,
@@ -2027,6 +2144,7 @@ def get_user():
                 'start_of_day_value': team_start_of_day_value,
                 'pnl_today': team_pnl_today,
                 'pnl_pct_today': team_pnl_pct_today,
+                'is_instructor_for_competition': _is_competition_instructor(user, comp),
                 # Unified payload for rendering team+competition in one UI container.
                 'team_competition': {
                     'team': {'id': ct.team_id, 'name': team_name},
@@ -2572,27 +2690,43 @@ def curriculum_submit_assignment(assignment_id):
     curriculum = db.session.get(Curriculum, module.curriculum_id) if module else None
     if not module or not curriculum or not curriculum.enabled:
         return jsonify({"message": "Curriculum not enabled for this assignment"}), 404
+    request_competition_id = _first_present(data, "competition_id", "competitionId")
+    if request_competition_id is None:
+        return jsonify({"message": "competition_id is required"}), 422
+    resolved_request_competition_id = _resolve_submission_competition_id(request_competition_id)
+    if resolved_request_competition_id is None:
+        return jsonify({"message": "competition_id must be a valid integer"}), 422
+    if resolved_request_competition_id != curriculum.competition_id:
+        return jsonify({"message": "assignment does not belong to provided competition_id"}), 422
 
     # optional membership guard for students
     membership = CompetitionMember.query.filter_by(competition_id=curriculum.competition_id, user_id=user.id).first()
     comp = db.session.get(Competition, curriculum.competition_id)
     if not membership and not _is_competition_instructor(user, comp):
         return jsonify({"message": "User is not a member of this competition"}), 403
+    try:
+        normalized_answers = _normalize_submission_answers(assignment, answers)
+    except ValueError as exc:
+        return jsonify({"message": str(exc)}), 422
 
     score = 0.0
     auto_graded = False
     feedback = {"lateSubmission": datetime.utcnow() > module.due_date}
     if assignment.type in ("quiz", "exam"):
         answer_key = (assignment.answer_key_json or {}).get("questions", {})
-        total_questions = max(len(answer_key), 1)
-        correct = 0
-        for qid, expected in answer_key.items():
-            if answers.get(qid) == expected:
-                correct += 1
-        score = assignment.points * (correct / total_questions)
-        auto_graded = True
-        feedback["correct"] = correct
-        feedback["totalQuestions"] = len(answer_key)
+        if isinstance(answer_key, dict) and answer_key:
+            total_questions = len(answer_key)
+            correct = 0
+            mapped_answers = _quiz_answer_map_from_submission(normalized_answers)
+            for qid, expected in answer_key.items():
+                if mapped_answers.get(str(qid)) == expected:
+                    correct += 1
+            score = assignment.points * (correct / total_questions)
+            auto_graded = True
+            feedback["correct"] = correct
+            feedback["totalQuestions"] = total_questions
+        else:
+            feedback["gradingMode"] = "no_answer_key"
     else:
         # Written assignments are instructor graded.
         score = 0.0
@@ -2609,10 +2743,10 @@ def curriculum_submit_assignment(assignment_id):
             assignment_id=assignment_id,
             user_id=user.id,
             competition_id=curriculum.competition_id,
-            answers_json=answers,
+            answers_json=normalized_answers,
         )
         db.session.add(submission)
-    submission.answers_json = answers
+    submission.answers_json = normalized_answers
     submission.score = round(score, 2)
     submission.percentage = round(percentage, 2)
     submission.submitted_at = datetime.utcnow()
@@ -2630,12 +2764,15 @@ def curriculum_submit_assignment(assignment_id):
 
     return jsonify({
         "assignmentId": assignment_id,
+        "competitionId": curriculum.competition_id,
+        "competition_id": curriculum.competition_id,
         "userId": user.id,
+        "answers": submission.answers_json,
         "score": submission.score,
         "pointsEarned": submission.score,
         "pointsPossible": assignment.points,
         "percentage": submission.percentage,
-        "status": "graded" if submission.auto_graded else "pending_grade",
+        "status": "graded" if submission.auto_graded else ("submitted" if assignment.type in ("quiz", "exam") else "pending_grade"),
         "autoGraded": submission.auto_graded,
         "submittedAt": submission.submitted_at.isoformat(),
         "feedback": submission.feedback_json,
@@ -2668,6 +2805,7 @@ def curriculum_get_submission(assignment_id, user_id):
         "assignmentId": assignment_id,
         "userId": user_id,
         "answers": submission.answers_json,
+        "submissionContent": submission.answers_json,
         "score": submission.score,
         "percentage": submission.percentage,
         "submittedAt": submission.submitted_at.isoformat(),
@@ -2950,17 +3088,18 @@ def curriculum_teacher_roster(competition_id):
     if not requesting_user:
         return jsonify({"message": "Invalid credentials"}), 401
 
-    competition = db.session.get(Competition, competition_id)
+    resolved_competition_id = _resolve_curriculum_competition_id(competition_id)
+    competition = db.session.get(Competition, resolved_competition_id)
     if not competition:
         return jsonify({"message": "Competition not found"}), 404
     if not _is_competition_instructor(requesting_user, competition):
         return jsonify({"message": "Instructor access required"}), 403
 
-    curriculum = Curriculum.query.filter_by(competition_id=competition_id, enabled=True).first()
+    curriculum = Curriculum.query.filter_by(competition_id=resolved_competition_id, enabled=True).first()
     if not curriculum:
         return jsonify({"message": "Curriculum not enabled for this competition"}), 404
 
-    members = CompetitionMember.query.filter_by(competition_id=competition_id).all()
+    members = CompetitionMember.query.filter_by(competition_id=resolved_competition_id).all()
     member_ids = [m.user_id for m in members]
     users = User.query.filter(User.id.in_(member_ids)).all() if member_ids else []
     users_by_id = {u.id: u for u in users}
@@ -2970,6 +3109,13 @@ def curriculum_teacher_roster(competition_id):
     for uid in member_ids:
         user = users_by_id.get(uid)
         grade = grade_rows.get(uid, {})
+        latest_quiz = None
+        latest_written = None
+        for item in grade.get("items", []):
+            if item.get("assignmentType") in ("quiz", "exam") and (latest_quiz is None or (item.get("submittedAt") or "") > (latest_quiz.get("submittedAt") or "")):
+                latest_quiz = item
+            if item.get("assignmentType") in ("assignment", "written_assignment") and (latest_written is None or (item.get("submittedAt") or "") > (latest_written.get("submittedAt") or "")):
+                latest_written = item
         roster.append({
             "userId": uid,
             "displayName": user.username if user else f"user-{uid}",
@@ -2983,10 +3129,14 @@ def curriculum_teacher_roster(competition_id):
             "totalCurriculumItems": grade.get("totalCurriculumItems", 0),
             "hasTrades": grade.get("hasTrades", False),
             "tradeCount": grade.get("tradeCount", 0),
+            "latestQuizSubmission": latest_quiz,
+            "latestWrittenSubmission": latest_written,
         })
 
     return jsonify({
-        "competitionId": competition_id,
+        "competitionId": resolved_competition_id,
+        "competition_id": resolved_competition_id,
+        "is_instructor_for_competition": _is_competition_instructor(requesting_user, competition),
         "curriculumId": curriculum.id,
         "roster": roster,
     }), 200
@@ -3001,17 +3151,18 @@ def curriculum_teacher_student_detail(competition_id, student_id):
     if not requesting_user:
         return jsonify({"message": "Invalid credentials"}), 401
 
-    competition = db.session.get(Competition, competition_id)
+    resolved_competition_id = _resolve_curriculum_competition_id(competition_id)
+    competition = db.session.get(Competition, resolved_competition_id)
     if not competition:
         return jsonify({"message": "Competition not found"}), 404
     if not _is_competition_instructor(requesting_user, competition):
         return jsonify({"message": "Instructor access required"}), 403
 
-    curriculum = Curriculum.query.filter_by(competition_id=competition_id, enabled=True).first()
+    curriculum = Curriculum.query.filter_by(competition_id=resolved_competition_id, enabled=True).first()
     if not curriculum:
         return jsonify({"message": "Curriculum not enabled for this competition"}), 404
 
-    membership = CompetitionMember.query.filter_by(competition_id=competition_id, user_id=student_id).first()
+    membership = CompetitionMember.query.filter_by(competition_id=resolved_competition_id, user_id=student_id).first()
     if not membership:
         return jsonify({"message": "Student not found in competition"}), 404
     student = db.session.get(User, student_id)
@@ -3023,7 +3174,9 @@ def curriculum_teacher_student_detail(competition_id, student_id):
     items = grade.get("items", [])
 
     return jsonify({
-        "competitionId": competition_id,
+        "competitionId": resolved_competition_id,
+        "competition_id": resolved_competition_id,
+        "is_instructor_for_competition": _is_competition_instructor(requesting_user, competition),
         "curriculumId": curriculum.id,
         "student": {
             "userId": student.id,
@@ -3054,13 +3207,14 @@ def curriculum_teacher_student_trades(competition_id, student_id):
     if not requesting_user:
         return jsonify({"message": "Invalid credentials"}), 401
 
-    competition = db.session.get(Competition, competition_id)
+    resolved_competition_id = _resolve_curriculum_competition_id(competition_id)
+    competition = db.session.get(Competition, resolved_competition_id)
     if not competition:
         return jsonify({"message": "Competition not found"}), 404
     if not _is_competition_instructor(requesting_user, competition):
         return jsonify({"message": "Instructor access required"}), 403
 
-    membership = CompetitionMember.query.filter_by(competition_id=competition_id, user_id=student_id).first()
+    membership = CompetitionMember.query.filter_by(competition_id=resolved_competition_id, user_id=student_id).first()
     if not membership:
         return jsonify({"message": "Student not found in competition"}), 404
 
@@ -3086,7 +3240,7 @@ def curriculum_teacher_student_trades(competition_id, student_id):
         })
 
     return jsonify({
-        "competitionId": competition_id,
+        "competitionId": resolved_competition_id,
         "studentId": student_id,
         "trades": rows,
     }), 200
@@ -3652,7 +3806,7 @@ def admin_get_competitions():
         return jsonify({'message': 'Not authorized'}), 403
 
     competitions = Competition.query.all()
-    data = [_serialize_competition_identity(c) for c in competitions]
+    data = [_serialize_competition_identity(c, requesting_user=admin_user) for c in competitions]
     return jsonify(data)
 
 
@@ -3893,28 +4047,34 @@ def get_all_users():
 # Endpoint for listing all competitions
 @app.route('/competitions', methods=['GET'])
 def get_all_competitions():
+    requester = request.args.get("username")
+    requesting_user = User.query.filter_by(username=requester).first() if requester else None
     competitions = Competition.query.all()
-    competitions_data = [_serialize_competition_identity(comp) for comp in competitions]
+    competitions_data = [_serialize_competition_identity(comp, requesting_user=requesting_user) for comp in competitions]
     return jsonify(competitions_data)
 
 
 @app.route('/competition/by_code/<string:competition_code>', methods=['GET'])
 def get_competition_by_code(competition_code):
+    requester = request.args.get("username")
+    requesting_user = User.query.filter_by(username=requester).first() if requester else None
     competition = Competition.query.filter_by(code=str(competition_code).strip()).first()
     if not competition:
         return jsonify({'message': 'Competition not found'}), 404
-    return jsonify(_serialize_competition_identity(competition)), 200
+    return jsonify(_serialize_competition_identity(competition, requesting_user=requesting_user)), 200
 
 # --------------------
 # Featured Competitions Endpoint (updated)
 # --------------------
 @app.route('/featured_competitions', methods=['GET'])
 def get_featured_competitions():
+    requester = request.args.get("username")
+    requesting_user = User.query.filter_by(username=requester).first() if requester else None
     try:
         featured = Competition.query.filter_by(featured=True).all()
         result = []
         for comp in featured:
-            result.append(_serialize_competition_identity(comp))
+            result.append(_serialize_competition_identity(comp, requesting_user=requesting_user))
         app.logger.info(f"Returning {len(result)} featured competitions")
         return jsonify(result), 200
     except Exception as e:
