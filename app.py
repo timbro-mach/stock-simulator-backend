@@ -2393,19 +2393,20 @@ def curriculum_grade_submission(submission_id):
 def curriculum_instructor_overview(competition_id):
     requester = request.args.get("username")
     user = User.query.filter_by(username=requester).first() if requester else None
-    competition = db.session.get(Competition, competition_id)
+    resolved_competition_id = _resolve_curriculum_competition_id(competition_id)
+    competition = db.session.get(Competition, resolved_competition_id)
     if not competition:
         return jsonify({"message": "Competition not found"}), 404
     if not _is_competition_instructor(user, competition):
         return jsonify({"message": "Instructor access required"}), 403
-    curriculum = Curriculum.query.filter_by(competition_id=competition_id, enabled=True).first()
+    curriculum = Curriculum.query.filter_by(competition_id=resolved_competition_id, enabled=True).first()
     if not curriculum:
         return jsonify({"message": "Curriculum not enabled for this competition"}), 404
     modules = CurriculumModule.query.filter_by(curriculum_id=curriculum.id).all()
     module_ids = [m.id for m in modules]
     assignments = CurriculumAssignment.query.filter(CurriculumAssignment.module_id.in_(module_ids)).all() if module_ids else []
     assignment_ids = [a.id for a in assignments]
-    member_ids = [m.user_id for m in CompetitionMember.query.filter_by(competition_id=competition_id).all()]
+    member_ids = [m.user_id for m in CompetitionMember.query.filter_by(competition_id=resolved_competition_id).all()]
     submissions = CurriculumSubmission.query.filter(
         CurriculumSubmission.assignment_id.in_(assignment_ids),
         CurriculumSubmission.user_id.in_(member_ids)
@@ -2466,7 +2467,7 @@ def curriculum_instructor_overview(competition_id):
         })
 
     return jsonify({
-        "competitionId": competition_id,
+        "competitionId": resolved_competition_id,
         "curriculumId": curriculum.id,
         "students": student_rows,
         "assignments": assignment_rows,

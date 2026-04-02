@@ -482,3 +482,35 @@ def test_admin_delete_competition_handles_curriculum_and_normal_competitions(app
         assert app_module.Competition.query.filter_by(code=curriculum_code).first() is None
         assert app_module.Curriculum.query.filter_by(competition_id=curriculum_comp.id).first() is None
         assert app_module.Competition.query.filter_by(code=normal_code).first() is None
+
+
+def test_curriculum_instructor_overview_accepts_competition_member_account_id(app_client):
+    client, app_module = app_client
+    create_user(app_module, username="teacher", email="teacher@example.com")
+    create_user(app_module, username="student", email="student@example.com")
+
+    resp = _create_competition(client, {
+        "username": "teacher",
+        "competition_name": "Instructor Overview Member Id Cup",
+        "curriculumEnabled": True,
+        "curriculumWeeks": 6,
+        "curriculumStartDate": "2026-01-01",
+        "curriculumEndDate": "2026-03-01",
+    })
+    assert resp.status_code == 200
+
+    with app_module.app.app_context():
+        comp = app_module.Competition.query.filter_by(name="Instructor Overview Member Id Cup").first()
+        student = app_module.User.query.filter_by(username="student").first()
+        member = app_module.CompetitionMember(competition_id=comp.id, user_id=student.id, cash_balance=100000)
+        app_module.db.session.add(member)
+        app_module.db.session.commit()
+        member_account_id = member.id
+        competition_id = comp.id
+
+    overview_resp = client.get(
+        f"/curriculum/competition/{member_account_id}/instructor-overview",
+        query_string={"username": "teacher"},
+    )
+    assert overview_resp.status_code == 200
+    assert overview_resp.get_json()["competitionId"] == competition_id
