@@ -66,6 +66,33 @@ def _assert_curriculum_records_exist(app_module, competition_name, expected_week
         return comp.id
 
 
+def _setup_teacher_dashboard_case(client, app_module, competition_name="Teacher Dashboard Cup"):
+    create_user(app_module, username="teacher", email="teacher@example.com")
+    create_user(app_module, username="student", email="student@example.com")
+    create_user(app_module, username="outsider", email="outsider@example.com")
+
+    resp = _create_competition(client, {
+        "username": "teacher",
+        "competition_name": competition_name,
+        "curriculumEnabled": True,
+        "curriculumWeeks": 3,
+        "curriculumStartDate": "2026-01-01",
+        "curriculumEndDate": "2026-02-01",
+    })
+    assert resp.status_code == 200
+
+    with app_module.app.app_context():
+        comp = app_module.Competition.query.filter_by(name=competition_name).first()
+        student = app_module.User.query.filter_by(username="student").first()
+        app_module.db.session.add(app_module.CompetitionMember(competition_id=comp.id, user_id=student.id, cash_balance=100000))
+        app_module.db.session.commit()
+        curriculum = app_module.Curriculum.query.filter_by(competition_id=comp.id).first()
+        first_module = app_module.CurriculumModule.query.filter_by(curriculum_id=curriculum.id, week_number=1).first()
+        quiz = app_module.CurriculumAssignment.query.filter_by(module_id=first_module.id, type="quiz").first()
+        written = app_module.CurriculumAssignment.query.filter_by(module_id=first_module.id, type="assignment").first()
+        return comp.id, comp.code, student.id, quiz.id, written.id
+
+
 def test_competition_creation_without_curriculum_remains_unchanged(app_client):
     client, app_module = app_client
     create_user(app_module)
@@ -616,3 +643,148 @@ def test_admin_delete_competition_handles_curriculum_and_normal_competitions(app
         assert app_module.Competition.query.filter_by(code=curriculum_code).first() is None
         assert app_module.Curriculum.query.filter_by(competition_id=curriculum_comp.id).first() is None
         assert app_module.Competition.query.filter_by(code=normal_code).first() is None
+
+
+def test_teacher_dashboard_roster_and_student_detail_endpoints(app_client):
+    client, app_module = app_client
+    competition_id, _competition_code, student_id, quiz_id, written_id = _setup_teacher_dashboard_case(client, app_module)
+
+    with app_module.app.app_context():
+        quiz = app_module.db.session.get(app_module.CurriculumAssignment, quiz_id)
+        answer_key = quiz.answer_key_json["questions"]
+
+    quiz_submit_resp = client.post(
+        f"/curriculum/assignments/{quiz_id}/submissions",
+        json={"username": "student", "answers": answer_key},
+    )
+    assert quiz_submit_resp.status_code == 200
+    assert quiz_submit_resp.get_json()["status"] == "graded"
+
+    written_submit_resp = client.post(
+        f"/curriculum/assignments/{written_id}/submissions",
+        json={"username": "student", "answers": {"q1": "analysis", "q2": "reflection"}},
+    )
+    assert written_submit_resp.status_code == 200
+    assert written_submit_resp.get_json()["status"] == "pending_grade"
+
+    roster_resp = client.get(
+        f"/curriculum/competition/{competition_id}/teacher/roster",
+        query_string={"username": "teacher"},
+    )
+    assert roster_resp.status_code == 200
+    roster_payload = roster_resp.get_json()
+    assert roster_payload["roster"]
+    row = roster_payload["roster"][0]
+    assert row["userId"] == student_id
+    assert row["completedQuizzes"] == 1
+    assert row["completedAssignments"] == 1
+
+    detail_resp = client.get(
+        f"/curriculum/competition/{competition_id}/teacher/students/{student_id}",
+        query_string={"username": "teacher"},
+    )
+    assert detail_resp.status_code == 200
+    detail_payload = detail_resp.get_json()
+    assert detail_payload["student"]["userId"] == student_id
+    assignment_item = next(item for item in detail_payload["items"] if item["assignmentType"] == "assignment")
+    assert assignment_item["gradingStatus"] == "pending_grade"
+    assert assignment_item["isManuallyGradable"] is True
+    assert assignment_item["submissionContent"]
+
+
+def test_teacher_manual_grade_updates_summary_and_trade_blotter_endpoint(app_client, monkeypatch):
+    client, app_module = app_client
+    competition_id, competition_code, student_id, _quiz_id, written_id = _setup_teacher_dashboard_case(
+        client, app_module, competition_name="Teacher Grade And Trades Cup"
+    )
+
+    written_submit_resp = client.post(
+        f"/curriculum/assignments/{written_id}/submissions",
+        json={"username": "student", "answers": {"q1": "alpha", "q2": "beta"}},
+    )
+    assert written_submit_resp.status_code == 200
+
+    list_resp = client.get(
+        f"/curriculum/assignments/{written_id}/submissions",
+        query_string={"username": "teacher"},
+    )
+    submission_id = list_resp.get_json()["submissions"][0]["submissionId"]
+
+    pre_detail_resp = client.get(
+        f"/curriculum/competition/{competition_id}/teacher/students/{student_id}",
+        query_string={"username": "teacher"},
+    )
+    pre_assignment_item = next(item for item in pre_detail_resp.get_json()["items"] if item["assignmentType"] == "assignment")
+    assert pre_assignment_item["gradingStatus"] == "pending_grade"
+    assert pre_assignment_item["pointsEarned"] == 0.0
+
+    grade_resp = client.post(
+        f"/curriculum/submissions/{submission_id}/grade",
+        json={"username": "teacher", "score": 18, "feedback": "Strong submission", "rubric_notes": "Clear structure"},
+    )
+    assert grade_resp.status_code == 200
+    grade_payload = grade_resp.get_json()
+    assert grade_payload["score"] == 18
+    assert grade_payload["status"] == "graded"
+    assert grade_payload["gradeSummary"]["totalPointsEarned"] >= 18
+
+    post_detail_resp = client.get(
+        f"/curriculum/competition/{competition_id}/teacher/students/{student_id}",
+        query_string={"username": "teacher"},
+    )
+    post_assignment_item = next(item for item in post_detail_resp.get_json()["items"] if item["assignmentType"] == "assignment")
+    assert post_assignment_item["gradingStatus"] == "graded"
+    assert post_assignment_item["pointsEarned"] == 18.0
+    assert post_assignment_item["rubricNotes"] == "Clear structure"
+
+    monkeypatch.setattr(app_module, "get_current_price", lambda symbol: 100.0)
+    trade_resp = client.post(
+        "/competition/buy",
+        json={"username": "student", "competition_id": competition_id, "competition_code": competition_code, "symbol": "AAPL", "quantity": 1},
+    )
+    assert trade_resp.status_code == 200
+
+    trades_resp = client.get(
+        f"/curriculum/competition/{competition_id}/teacher/students/{student_id}/trades",
+        query_string={"username": "teacher"},
+    )
+    assert trades_resp.status_code == 200
+    trades = trades_resp.get_json()["trades"]
+    assert trades
+    assert trades[0]["symbol"] == "AAPL"
+    assert trades[0]["side"] == "buy"
+
+
+def test_student_cannot_access_teacher_dashboard_routes(app_client):
+    client, app_module = app_client
+    competition_id, _competition_code, student_id, _quiz_id, written_id = _setup_teacher_dashboard_case(
+        client, app_module, competition_name="Teacher Auth Guard Cup"
+    )
+
+    roster_resp = client.get(
+        f"/curriculum/competition/{competition_id}/teacher/roster",
+        query_string={"username": "student"},
+    )
+    assert roster_resp.status_code == 403
+
+    detail_resp = client.get(
+        f"/curriculum/competition/{competition_id}/teacher/students/{student_id}",
+        query_string={"username": "student"},
+    )
+    assert detail_resp.status_code == 403
+
+    list_resp = client.post(
+        f"/curriculum/assignments/{written_id}/submissions",
+        json={"username": "student", "answers": {"q1": "x", "q2": "y"}},
+    )
+    submission_id = client.get(
+        f"/curriculum/assignments/{written_id}/submissions",
+        query_string={"username": "teacher"},
+    ).get_json()["submissions"][0]["submissionId"]
+    assert list_resp.status_code == 200
+
+    forbidden_grade_resp = client.post(
+        f"/curriculum/submissions/{submission_id}/grade",
+        json={"username": "student", "score": 10},
+    )
+    assert forbidden_grade_resp.status_code == 403
