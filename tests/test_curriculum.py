@@ -186,15 +186,13 @@ def test_quiz_submission_auto_grades_correctly_and_grade_summary(app_client):
         curriculum = app_module.Curriculum.query.filter_by(competition_id=comp.id).first()
         first_module = app_module.CurriculumModule.query.filter_by(curriculum_id=curriculum.id, week_number=1).first()
         quiz = app_module.CurriculumAssignment.query.filter_by(module_id=first_module.id, type="quiz").first()
+        answer_key = quiz.answer_key_json["questions"]
 
     submit_resp = client.post(
         f"/curriculum/assignments/{quiz.id}/submissions",
         json={
             "username": "student",
-            "answers": {
-                "q1": "Diversification",
-                "q2": "(Ending Value - Starting Value) / Starting Value",
-            },
+            "answers": answer_key,
         },
     )
     assert submit_resp.status_code == 200
@@ -242,6 +240,97 @@ def test_curriculum_endpoints_do_not_interfere_with_simulator_endpoints(app_clie
     )
     assert trade_resp.status_code == 200
     assert trade_resp.get_json()["message"] == "Competition buy successful"
+
+
+def test_curriculum_modules_include_lesson_content_and_rich_assignments(app_client):
+    client, app_module = app_client
+    create_user(app_module, username="teacher", email="teacher@example.com")
+
+    resp = _create_competition(client, {
+        "username": "teacher",
+        "competition_name": "Lesson Content Cup",
+        "curriculumEnabled": True,
+        "curriculumWeeks": 4,
+        "curriculumStartDate": "2026-01-01",
+        "curriculumEndDate": "2026-02-01",
+    })
+    assert resp.status_code == 200
+
+    with app_module.app.app_context():
+        comp = app_module.Competition.query.filter_by(name="Lesson Content Cup").first()
+        competition_id = comp.id
+
+    modules_resp = client.get(f"/curriculum/competition/{competition_id}/modules")
+    assert modules_resp.status_code == 200
+    modules = modules_resp.get_json()
+    assert modules
+    first_module = modules[0]
+    assert first_module["lessonContent"]
+    assert len(first_module["lessonContent"]) > 300
+    quiz = next(a for a in first_module["assignments"] if a["type"] == "quiz")
+    assert len(quiz["content"]["questions"]) == 20
+    assert len(quiz["answer_key_json"]["questions"]) == 20
+    written = next(a for a in first_module["assignments"] if a["type"] == "assignment")
+    assert len(written["content"]["questions"]) == 2
+    assert all(len(q["sections"]) >= 3 for q in written["content"]["questions"])
+
+
+def test_instructor_can_list_submissions_and_manually_grade(app_client):
+    client, app_module = app_client
+    create_user(app_module, username="teacher", email="teacher@example.com")
+    create_user(app_module, username="student", email="student@example.com")
+
+    resp = _create_competition(client, {
+        "username": "teacher",
+        "competition_name": "Manual Grade Cup",
+        "curriculumEnabled": True,
+        "curriculumWeeks": 3,
+        "curriculumStartDate": "2026-01-01",
+        "curriculumEndDate": "2026-02-01",
+    })
+    assert resp.status_code == 200
+
+    with app_module.app.app_context():
+        comp = app_module.Competition.query.filter_by(name="Manual Grade Cup").first()
+        student = app_module.User.query.filter_by(username="student").first()
+        app_module.db.session.add(app_module.CompetitionMember(competition_id=comp.id, user_id=student.id, cash_balance=100000))
+        app_module.db.session.commit()
+
+        curriculum = app_module.Curriculum.query.filter_by(competition_id=comp.id).first()
+        first_module = app_module.CurriculumModule.query.filter_by(curriculum_id=curriculum.id, week_number=1).first()
+        assignment = app_module.CurriculumAssignment.query.filter_by(module_id=first_module.id, type="assignment").first()
+        competition_id = comp.id
+
+    submit_resp = client.post(
+        f"/curriculum/assignments/{assignment.id}/submissions",
+        json={"username": "student", "answers": {"a1": {"a": "test"}, "a2": {"a": "12.5%"}}},
+    )
+    assert submit_resp.status_code == 200
+    assert submit_resp.get_json()["autoGraded"] is False
+
+    list_resp = client.get(
+        f"/curriculum/assignments/{assignment.id}/submissions",
+        query_string={"username": "teacher"},
+    )
+    assert list_resp.status_code == 200
+    list_payload = list_resp.get_json()
+    assert list_payload["totalSubmissions"] == 1
+    submission_id = list_payload["submissions"][0]["submissionId"]
+
+    grade_resp = client.post(
+        f"/curriculum/submissions/{submission_id}/grade",
+        json={"username": "teacher", "score": 17, "feedback": "Good use of diversification rationale."},
+    )
+    assert grade_resp.status_code == 200
+    assert grade_resp.get_json()["score"] == 17
+
+    overview_resp = client.get(
+        f"/curriculum/competition/{competition_id}/instructor-overview",
+        query_string={"username": "teacher"},
+    )
+    assert overview_resp.status_code == 200
+    overview_payload = overview_resp.get_json()
+    assert "recentSubmissions" in overview_payload
 
 
 def test_curriculum_summary_accepts_competition_member_account_id(app_client):

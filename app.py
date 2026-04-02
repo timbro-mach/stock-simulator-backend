@@ -127,6 +127,7 @@ class CurriculumModule(db.Model):
     week_number = db.Column(db.Integer, nullable=False)
     title = db.Column(db.String(255), nullable=False)
     description = db.Column(db.Text, nullable=True)
+    lesson_content = db.Column(db.Text, nullable=True)
     unlock_date = db.Column(db.DateTime, nullable=False)
     due_date = db.Column(db.DateTime, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
@@ -306,6 +307,10 @@ def ensure_schema_compatibility():
                     'CREATE UNIQUE INDEX IF NOT EXISTS _account_performance_daily_uc '
                     'ON account_performance_history (username, account_type, account_id, date)'
                 ))
+        if 'curriculum_module' in table_names:
+            existing_cols = {c['name'] for c in insp.get_columns('curriculum_module')}
+            if 'lesson_content' not in existing_cols:
+                db.session.execute(text('ALTER TABLE curriculum_module ADD COLUMN lesson_content TEXT'))
         db.session.commit()
     except Exception:
         db.session.rollback()
@@ -428,38 +433,114 @@ def _build_module_schedule(total_weeks, start_date, end_date):
     return schedule
 
 
-def _quiz_content_for_module(module_title):
-    questions = [
-        {
-            "id": "q1",
-            "prompt": f"In {module_title}, which concept best supports disciplined investing?",
-            "choices": ["Diversification", "All-in single stock bets", "Ignoring risk", "Timing every top"],
-            "correctAnswer": "Diversification",
-        },
-        {
-            "id": "q2",
-            "prompt": "Which metric is directly tied to percentage return?",
-            "choices": ["(Ending Value - Starting Value) / Starting Value", "Only absolute dollars", "Share count only", "Ticker symbol"],
-            "correctAnswer": "(Ending Value - Starting Value) / Starting Value",
-        },
+def _lesson_content_for_module(module_title, module_description, week_number):
+    return (
+        f"## Week {week_number} eText: {module_title}\n\n"
+        f"{module_description} This lesson is written as an applied Investments course for college students who are actively running portfolios.\n\n"
+        "### Core concepts\n"
+        "Investing requires trade-offs between expected return, risk, liquidity, and behavioral discipline. "
+        "You should evaluate each trade idea using a repeatable process: define the thesis, identify the risk drivers, "
+        "estimate probable outcomes, and decide position size relative to total portfolio risk.\n\n"
+        "### Worked example\n"
+        "Suppose a student compares buying one high-beta technology stock versus allocating across a broad-market ETF and a sector ETF. "
+        "The single-stock position may offer a higher upside in favorable scenarios but introduces concentration risk and larger drawdowns. "
+        "The ETF mix typically lowers idiosyncratic risk and may improve risk-adjusted return over a full semester.\n\n"
+        "### Real-world investing connection\n"
+        "Professional portfolio managers rarely evaluate securities in isolation. They consider factor exposures, sector concentration, "
+        "macro sensitivity (rates, inflation, earnings cycle), and implementation cost. Academic research on diversification and "
+        "portfolio construction supports the same principle: portfolio context matters as much as individual security selection.\n\n"
+        "### Simulator integration\n"
+        "In this module, you should execute at least one buy or sell and document how it changes your exposure profile. "
+        "Track your weights in stocks and ETFs, compare pre-trade and post-trade concentration, and justify why your new mix better fits your objective. "
+        "After several sessions, review performance attribution: determine what came from allocation versus individual selection.\n\n"
+        "### Reflection checkpoint\n"
+        "Before submitting assignments, explain what information would make you reverse your thesis, and identify a risk-control rule "
+        "you will enforce (for example, max position size, staged entries, or a rebalance trigger)."
+    )
+
+
+def _quiz_content_for_module(module_title, question_count=20):
+    concept_pairs = [
+        ("portfolio diversification", "It reduces unsystematic risk without requiring market timing."),
+        ("risk-adjusted return", "It compares returns relative to the volatility or downside risk taken."),
+        ("asset allocation", "It is the primary driver of long-run portfolio behavior."),
+        ("position sizing", "It limits the damage from any single incorrect thesis."),
+        ("ETF expense ratios", "Lower recurring costs can materially improve long-run compounding."),
+        ("rebalancing", "It restores target weights and can enforce buy-low/sell-high discipline."),
+        ("valuation discipline", "It helps investors avoid overpaying for growth expectations."),
+        ("liquidity risk", "Thin trading volume can widen spreads and raise execution costs."),
+        ("behavioral bias", "Recency bias can lead to performance-chasing decisions."),
+        ("drawdown management", "Smaller drawdowns improve the probability of recovery."),
     ]
+    questions = []
+    for idx in range(question_count):
+        concept, correct = concept_pairs[idx % len(concept_pairs)]
+        qid = f"q{idx + 1}"
+        distractors = [
+            "It guarantees positive returns in every market regime.",
+            "It removes the need to evaluate macro and company-specific risk.",
+            "It matters only for institutional investors, not individual portfolios.",
+        ]
+        questions.append({
+            "id": qid,
+            "prompt": f"{module_title}: Which statement best describes {concept}?",
+            "choices": [correct] + distractors,
+            "correctAnswer": correct,
+        })
+
     return {
-        "instructions": "Select the best answer for each question.",
+        "instructions": "Select one best answer for each question. Use module concepts and simulator evidence when relevant.",
         "questions": [{"id": q["id"], "prompt": q["prompt"], "choices": q["choices"]} for q in questions],
     }, {"questions": {q["id"]: q["correctAnswer"] for q in questions}}
 
 
 def _assignment_content_for_module(module_title):
     return {
-        "instructions": f"Write a short applied response for {module_title}.",
+        "instructions": (
+            f"Complete both questions for {module_title}. Reference your simulator portfolio trades, weights, and outcomes. "
+            "Show calculations for quantitative parts and use complete sentences for qualitative analysis."
+        ),
         "questions": [
             {
                 "id": "a1",
-                "prompt": "Describe one investment decision you would make and justify it using course concepts.",
-            }
+                "kind": "qualitative",
+                "prompt": "Qualitative analysis: defend your current portfolio positioning.",
+                "sections": [
+                    {"id": "a", "instruction": "State one buy/sell decision made in the simulator and explain the investment thesis."},
+                    {"id": "b", "instruction": "Evaluate diversification: identify concentration risk by sector, position size, or factor exposure."},
+                    {"id": "c", "instruction": "Describe one change you would make now and justify it using course concepts and market context."},
+                ],
+            },
+            {
+                "id": "a2",
+                "kind": "quantitative",
+                "prompt": "Quantitative analysis: measure portfolio performance and allocation quality.",
+                "sections": [
+                    {"id": "a", "instruction": "Compute portfolio return over your selected window and compare it to a benchmark ETF."},
+                    {"id": "b", "instruction": "Calculate post-trade allocation weights across at least 3 holdings (include at least one ETF)."},
+                    {"id": "c", "instruction": "Estimate contribution to return from your top two positions and interpret the result."},
+                ],
+            },
         ],
-        "rubricHints": ["Use evidence", "Address risk", "Explain trade-offs"],
+        "rubricHints": [
+            "Evidence quality and use of simulator data",
+            "Depth of risk/return reasoning",
+            "Accuracy of quantitative work",
+            "Clarity and professional writing",
+        ],
     }
+
+
+def _final_exam_content(topics, question_count=20):
+    exam_content, exam_answer_key = _quiz_content_for_module(
+        "Final Cumulative Exam",
+        question_count=question_count,
+    )
+    exam_content["instructions"] = (
+        "Cumulative final exam. Questions span all modules. Select one best answer per question."
+    )
+    exam_content["coveredModules"] = [topic[0] for topic in topics]
+    return exam_content, exam_answer_key
 
 
 def generate_curriculum_for_competition(competition_id, total_weeks, start_date, end_date, overwrite=False):
@@ -505,13 +586,14 @@ def generate_curriculum_for_competition(competition_id, total_weeks, start_date,
             week_number=week,
             title=f"Week {week}: {title}",
             description=description,
+            lesson_content=_lesson_content_for_module(title, description, week),
             unlock_date=unlock_date,
             due_date=due_date,
         )
         db.session.add(module)
         db.session.flush()
 
-        quiz_content, quiz_answer_key = _quiz_content_for_module(module.title)
+        quiz_content, quiz_answer_key = _quiz_content_for_module(module.title, question_count=20)
         db.session.add(CurriculumAssignment(
             module_id=module.id,
             type="quiz",
@@ -531,7 +613,7 @@ def generate_curriculum_for_competition(competition_id, total_weeks, start_date,
         ))
 
         if week == total_weeks:
-            exam_content, exam_answer_key = _quiz_content_for_module("Final Exam")
+            exam_content, exam_answer_key = _final_exam_content(topics, question_count=20)
             db.session.add(CurriculumAssignment(
                 module_id=module.id,
                 type="exam",
@@ -2074,6 +2156,8 @@ def curriculum_modules(competition_id):
             "weekNumber": module.week_number,
             "title": module.title,
             "description": module.description,
+            "lessonContent": module.lesson_content,
+            "lesson_content": module.lesson_content,
             "unlockDate": module.unlock_date.isoformat(),
             "dueDate": module.due_date.isoformat(),
             "assignments": [{
@@ -2082,6 +2166,8 @@ def curriculum_modules(competition_id):
                 "title": a.title,
                 "points": a.points,
                 "content": a.content_json,
+                "content_json": a.content_json,
+                "answer_key_json": a.answer_key_json,
             } for a in assignments]
         })
     return jsonify(payload)
@@ -2106,8 +2192,47 @@ def curriculum_grades(competition_id, user_id):
     return jsonify(summary)
 
 
-@app.route('/curriculum/assignments/<int:assignment_id>/submissions', methods=['POST'])
+@app.route('/curriculum/assignments/<int:assignment_id>/submissions', methods=['GET', 'POST'])
 def curriculum_submit_assignment(assignment_id):
+    if request.method == 'GET':
+        requester = request.args.get("username")
+        user = User.query.filter_by(username=requester).first() if requester else None
+        assignment = db.session.get(CurriculumAssignment, assignment_id)
+        if not assignment:
+            return jsonify({"message": "Assignment not found"}), 404
+        module = db.session.get(CurriculumModule, assignment.module_id)
+        curriculum = db.session.get(Curriculum, module.curriculum_id) if module else None
+        competition = db.session.get(Competition, curriculum.competition_id) if curriculum else None
+        if not curriculum or not competition:
+            return jsonify({"message": "Curriculum not found"}), 404
+        if not _is_competition_instructor(user, competition):
+            return jsonify({"message": "Instructor access required"}), 403
+
+        submissions = CurriculumSubmission.query.filter_by(assignment_id=assignment_id).order_by(
+            CurriculumSubmission.submitted_at.desc()
+        ).all()
+        payload = []
+        for sub in submissions:
+            student = db.session.get(User, sub.user_id)
+            payload.append({
+                "submissionId": sub.id,
+                "assignmentId": assignment_id,
+                "userId": sub.user_id,
+                "username": student.username if student else f"user-{sub.user_id}",
+                "answers": sub.answers_json,
+                "score": sub.score,
+                "percentage": sub.percentage,
+                "autoGraded": sub.auto_graded,
+                "submittedAt": sub.submitted_at.isoformat(),
+                "feedback": sub.feedback_json,
+            })
+        return jsonify({
+            "assignmentId": assignment_id,
+            "assignmentType": assignment.type,
+            "totalSubmissions": len(payload),
+            "submissions": payload,
+        })
+
     data = request.get_json() or {}
     username = data.get("username")
     answers = data.get("answers", {})
@@ -2143,12 +2268,11 @@ def curriculum_submit_assignment(assignment_id):
         feedback["correct"] = correct
         feedback["totalQuestions"] = len(answer_key)
     else:
-        # Placeholder grading for short-response assignments: completion-based.
-        # Keeps architecture ready for richer rubric/AI grading later.
-        has_content = bool(answers)
-        score = assignment.points if has_content else 0.0
-        auto_graded = has_content
-        feedback["gradingMode"] = "completion_based_placeholder"
+        # Written assignments are instructor graded.
+        score = 0.0
+        auto_graded = False
+        feedback["gradingMode"] = "manual_instructor_required"
+        feedback["pendingManualGrade"] = True
 
     percentage = (score / assignment.points * 100.0) if assignment.points else 0.0
     submission = CurriculumSubmission.query.filter_by(assignment_id=assignment_id, user_id=user.id).first()
@@ -2211,6 +2335,60 @@ def curriculum_get_submission(assignment_id, user_id):
     })
 
 
+@app.route('/curriculum/submissions/<int:submission_id>/grade', methods=['POST'])
+def curriculum_grade_submission(submission_id):
+    data = request.get_json() or {}
+    requester = data.get("username")
+    user = User.query.filter_by(username=requester).first() if requester else None
+    submission = db.session.get(CurriculumSubmission, submission_id)
+    if not submission:
+        return jsonify({"message": "Submission not found"}), 404
+    assignment = db.session.get(CurriculumAssignment, submission.assignment_id)
+    module = db.session.get(CurriculumModule, assignment.module_id) if assignment else None
+    curriculum = db.session.get(Curriculum, module.curriculum_id) if module else None
+    competition = db.session.get(Competition, curriculum.competition_id) if curriculum else None
+    if not assignment or not module or not curriculum or not competition:
+        return jsonify({"message": "Curriculum context not found"}), 404
+    if not _is_competition_instructor(user, competition):
+        return jsonify({"message": "Instructor access required"}), 403
+
+    score_input = data.get("score")
+    if score_input is None:
+        return jsonify({"message": "score is required"}), 400
+    try:
+        score = float(score_input)
+    except (TypeError, ValueError):
+        return jsonify({"message": "score must be numeric"}), 400
+    if score < 0:
+        return jsonify({"message": "score cannot be negative"}), 400
+    if assignment.points is not None and score > assignment.points:
+        score = float(assignment.points)
+
+    feedback = submission.feedback_json or {}
+    feedback["gradedBy"] = requester
+    feedback["gradedAt"] = datetime.utcnow().isoformat()
+    if "feedback" in data:
+        feedback["instructorComment"] = data.get("feedback")
+    feedback["pendingManualGrade"] = False
+
+    submission.score = round(score, 2)
+    submission.percentage = round((score / assignment.points * 100.0) if assignment.points else 0.0, 2)
+    submission.auto_graded = False
+    submission.feedback_json = feedback
+    db.session.commit()
+
+    return jsonify({
+        "submissionId": submission.id,
+        "assignmentId": assignment.id,
+        "userId": submission.user_id,
+        "score": submission.score,
+        "pointsPossible": assignment.points,
+        "percentage": submission.percentage,
+        "autoGraded": submission.auto_graded,
+        "feedback": submission.feedback_json,
+    })
+
+
 @app.route('/curriculum/competition/<int:competition_id>/instructor-overview', methods=['GET'])
 def curriculum_instructor_overview(competition_id):
     requester = request.args.get("username")
@@ -2257,10 +2435,42 @@ def curriculum_instructor_overview(competition_id):
 
     class_avg = round(sum(row["percentage"] for row in student_rows) / len(student_rows), 2) if student_rows else 0.0
     class_completion = round(sum(row["completionRate"] for row in student_rows) / len(student_rows), 2) if student_rows else 0.0
+    assignment_rows = []
+    for assignment in assignments:
+        assignment_subs = [s for s in submissions if s.assignment_id == assignment.id]
+        avg_score = round(sum(s.score for s in assignment_subs) / len(assignment_subs), 2) if assignment_subs else 0.0
+        assignment_rows.append({
+            "assignmentId": assignment.id,
+            "title": assignment.title,
+            "type": assignment.type,
+            "pointsPossible": assignment.points,
+            "submissionCount": len(assignment_subs),
+            "averageScore": avg_score,
+        })
+
+    recent_submissions = sorted(submissions, key=lambda s: s.submitted_at, reverse=True)[:25]
+    recent_rows = []
+    for sub in recent_submissions:
+        assignment = next((a for a in assignments if a.id == sub.assignment_id), None)
+        student = db.session.get(User, sub.user_id)
+        recent_rows.append({
+            "submissionId": sub.id,
+            "assignmentId": sub.assignment_id,
+            "assignmentTitle": assignment.title if assignment else None,
+            "userId": sub.user_id,
+            "username": student.username if student else f"user-{sub.user_id}",
+            "score": sub.score,
+            "percentage": sub.percentage,
+            "submittedAt": sub.submitted_at.isoformat(),
+            "autoGraded": sub.auto_graded,
+        })
+
     return jsonify({
         "competitionId": competition_id,
         "curriculumId": curriculum.id,
         "students": student_rows,
+        "assignments": assignment_rows,
+        "recentSubmissions": recent_rows,
         "classAveragePercentage": class_avg,
         "classCompletionRate": class_completion,
         "totalAssignments": len(assignments),
