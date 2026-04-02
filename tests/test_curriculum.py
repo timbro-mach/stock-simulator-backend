@@ -211,6 +211,88 @@ def test_quiz_submission_auto_grades_correctly_and_grade_summary(app_client):
     assert grades_payload["letterGrade"] in {"A", "B", "C", "D", "F"}
 
 
+def test_curriculum_grades_requires_auth_and_permissions(app_client):
+    client, app_module = app_client
+    create_user(app_module, username="teacher", email="teacher@example.com")
+    create_user(app_module, username="student", email="student@example.com")
+    create_user(app_module, username="outsider", email="outsider@example.com")
+
+    resp = _create_competition(client, {
+        "username": "teacher",
+        "competition_name": "Auth Check Cup",
+        "curriculumEnabled": True,
+        "curriculumWeeks": 4,
+        "curriculumStartDate": "2026-01-01",
+        "curriculumEndDate": "2026-02-15",
+    })
+    assert resp.status_code == 200
+
+    with app_module.app.app_context():
+        comp = app_module.Competition.query.filter_by(name="Auth Check Cup").first()
+        student = app_module.User.query.filter_by(username="student").first()
+        app_module.db.session.add(app_module.CompetitionMember(competition_id=comp.id, user_id=student.id, cash_balance=100000))
+        app_module.db.session.commit()
+        competition_id = comp.id
+        student_id = student.id
+
+    missing_auth_resp = client.get(f"/curriculum/competition/{competition_id}/grades/{student_id}")
+    assert missing_auth_resp.status_code == 401
+
+    unknown_user_resp = client.get(
+        f"/curriculum/competition/{competition_id}/grades/{student_id}",
+        query_string={"username": "ghost"},
+    )
+    assert unknown_user_resp.status_code == 401
+
+    forbidden_resp = client.get(
+        f"/curriculum/competition/{competition_id}/grades/{student_id}",
+        query_string={"username": "outsider"},
+    )
+    assert forbidden_resp.status_code == 403
+
+
+def test_curriculum_grades_accepts_member_account_id_and_checks_membership(app_client):
+    client, app_module = app_client
+    create_user(app_module, username="teacher", email="teacher@example.com")
+    create_user(app_module, username="student", email="student@example.com")
+    create_user(app_module, username="nonmember", email="nonmember@example.com")
+
+    resp = _create_competition(client, {
+        "username": "teacher",
+        "competition_name": "Grade Lookup Cup",
+        "curriculumEnabled": True,
+        "curriculumWeeks": 4,
+        "curriculumStartDate": "2026-01-01",
+        "curriculumEndDate": "2026-02-15",
+    })
+    assert resp.status_code == 200
+
+    with app_module.app.app_context():
+        comp = app_module.Competition.query.filter_by(name="Grade Lookup Cup").first()
+        student = app_module.User.query.filter_by(username="student").first()
+        nonmember = app_module.User.query.filter_by(username="nonmember").first()
+        member = app_module.CompetitionMember(competition_id=comp.id, user_id=student.id, cash_balance=100000)
+        app_module.db.session.add(member)
+        app_module.db.session.commit()
+        member_account_id = member.id
+        competition_id = comp.id
+        student_id = student.id
+        nonmember_id = nonmember.id
+
+    member_id_resp = client.get(
+        f"/curriculum/competition/{member_account_id}/grades/{student_id}",
+        query_string={"username": "student"},
+    )
+    assert member_id_resp.status_code == 200
+    assert member_id_resp.get_json()["competitionId"] == competition_id
+
+    nonmember_resp = client.get(
+        f"/curriculum/competition/{member_account_id}/grades/{nonmember_id}",
+        query_string={"username": "nonmember"},
+    )
+    assert nonmember_resp.status_code == 404
+
+
 def test_curriculum_endpoints_do_not_interfere_with_simulator_endpoints(app_client, monkeypatch):
     client, app_module = app_client
     create_user(app_module, username="teacher", email="teacher@example.com")
