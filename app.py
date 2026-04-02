@@ -631,10 +631,6 @@ def _compute_grade_summary(competition_id, user_id):
 
 
 def _resolve_curriculum_competition_id(raw_competition_id):
-    competition = db.session.get(Competition, raw_competition_id)
-    if competition:
-        return competition.id
-
     competition_member = db.session.get(CompetitionMember, raw_competition_id)
     if competition_member:
         return competition_member.competition_id
@@ -642,6 +638,10 @@ def _resolve_curriculum_competition_id(raw_competition_id):
     competition_team = db.session.get(CompetitionTeam, raw_competition_id)
     if competition_team:
         return competition_team.competition_id
+
+    competition = db.session.get(Competition, raw_competition_id)
+    if competition:
+        return competition.id
 
     return raw_competition_id
 
