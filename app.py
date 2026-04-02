@@ -989,6 +989,15 @@ def _build_teacher_grade_rows(competition, curriculum, member_ids):
 
 
 def _resolve_curriculum_competition_id(raw_competition_id):
+    competition = db.session.get(Competition, raw_competition_id)
+    curriculum_for_competition = (
+        Curriculum.query.filter_by(competition_id=competition.id).first()
+        if competition
+        else None
+    )
+    if competition and curriculum_for_competition:
+        return competition.id
+
     competition_member = db.session.get(CompetitionMember, raw_competition_id)
     if competition_member:
         return competition_member.competition_id
@@ -996,10 +1005,6 @@ def _resolve_curriculum_competition_id(raw_competition_id):
     competition_team = db.session.get(CompetitionTeam, raw_competition_id)
     if competition_team:
         return competition_team.competition_id
-
-    competition = db.session.get(Competition, raw_competition_id)
-    if competition:
-        return competition.id
 
     return raw_competition_id
 

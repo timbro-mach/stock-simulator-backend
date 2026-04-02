@@ -821,6 +821,70 @@ def test_competition_creator_can_access_teacher_endpoints_with_member_account_id
     assert roster_resp.get_json()["is_instructor_for_competition"] is True
 
 
+def test_teacher_roster_prefers_competition_id_when_member_id_collides(app_client):
+    client, app_module = app_client
+    create_user(app_module, username="teacher", email="teacher@example.com")
+    create_user(app_module, username="student", email="student@example.com")
+    create_user(app_module, username="other", email="other@example.com")
+
+    baseline_resp = _create_competition(client, {
+        "username": "teacher",
+        "competition_name": "Roster Collision Baseline Cup",
+        "start_date": "2026-01-01",
+        "end_date": "2026-03-01",
+    })
+    assert baseline_resp.status_code == 200
+
+    target_resp = _create_competition(client, {
+        "username": "teacher",
+        "competition_name": "Roster Collision Target Cup",
+        "curriculumEnabled": True,
+        "curriculumWeeks": 3,
+        "curriculumStartDate": "2026-01-01",
+        "curriculumEndDate": "2026-02-01",
+    })
+    assert target_resp.status_code == 200
+
+    with app_module.app.app_context():
+        baseline_comp = app_module.Competition.query.filter_by(name="Roster Collision Baseline Cup").first()
+        target_comp = app_module.Competition.query.filter_by(name="Roster Collision Target Cup").first()
+        teacher = app_module.User.query.filter_by(username="teacher").first()
+        student = app_module.User.query.filter_by(username="student").first()
+        other = app_module.User.query.filter_by(username="other").first()
+
+        baseline_member_1 = app_module.CompetitionMember(
+            competition_id=baseline_comp.id,
+            user_id=student.id,
+            cash_balance=100000,
+        )
+        baseline_member_2 = app_module.CompetitionMember(
+            competition_id=baseline_comp.id,
+            user_id=other.id,
+            cash_balance=100000,
+        )
+        target_member = app_module.CompetitionMember(
+            competition_id=target_comp.id,
+            user_id=student.id,
+            cash_balance=100000,
+        )
+        app_module.db.session.add_all([baseline_member_1, baseline_member_2, target_member])
+        app_module.db.session.commit()
+
+        assert baseline_member_2.id == target_comp.id
+        target_comp_id = target_comp.id
+        student_id = student.id
+
+    roster_resp = client.get(
+        f"/curriculum/competition/{target_comp_id}/teacher/roster",
+        query_string={"username": "teacher"},
+    )
+    assert roster_resp.status_code == 200
+    payload = roster_resp.get_json()
+    assert payload["competitionId"] == target_comp_id
+    assert len(payload["roster"]) == 1
+    assert payload["roster"][0]["userId"] == student_id
+
+
 def test_quiz_submission_array_format_auto_grades_and_surfaces_in_teacher_views(app_client):
     client, app_module = app_client
     competition_id, _competition_code, student_id, quiz_id, _written_id = _setup_teacher_dashboard_case(
