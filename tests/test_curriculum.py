@@ -197,7 +197,7 @@ def test_quiz_submission_auto_grades_correctly_and_grade_summary(app_client):
     )
     assert submit_resp.status_code == 200
     submit_payload = submit_resp.get_json()
-    assert submit_payload["score"] == 10
+    assert submit_payload["score"] == 20
     assert submit_payload["percentage"] == 100
 
     grades_resp = client.get(
@@ -207,7 +207,7 @@ def test_quiz_submission_auto_grades_correctly_and_grade_summary(app_client):
     assert grades_resp.status_code == 200
     grades_payload = grades_resp.get_json()
     assert grades_payload["totalPointsPossible"] > 0
-    assert grades_payload["totalPointsEarned"] >= 10
+    assert grades_payload["totalPointsEarned"] >= 20
     assert grades_payload["letterGrade"] in {"A", "B", "C", "D", "F"}
 
 
@@ -319,10 +319,12 @@ def test_instructor_can_list_submissions_and_manually_grade(app_client):
 
     grade_resp = client.post(
         f"/curriculum/submissions/{submission_id}/grade",
-        json={"username": "teacher", "score": 17, "feedback": "Good use of diversification rationale."},
+        json={"username": "teacher", "question_1_score": 9, "question_2_score": 8, "feedback": "Good use of diversification rationale."},
     )
     assert grade_resp.status_code == 200
     assert grade_resp.get_json()["score"] == 17
+    assert grade_resp.get_json()["question1Score"] == 9
+    assert grade_resp.get_json()["question2Score"] == 8
 
     overview_resp = client.get(
         f"/curriculum/competition/{competition_id}/instructor-overview",
@@ -331,6 +333,56 @@ def test_instructor_can_list_submissions_and_manually_grade(app_client):
     assert overview_resp.status_code == 200
     overview_payload = overview_resp.get_json()
     assert "recentSubmissions" in overview_payload
+    assert "writtenAssignmentSubmissions" in overview_payload
+
+
+def test_module_grade_breakdown_includes_trade_participation_and_competition_gradebook(app_client, monkeypatch):
+    client, app_module = app_client
+    create_user(app_module, username="teacher", email="teacher@example.com")
+    create_user(app_module, username="student", email="student@example.com")
+
+    resp = _create_competition(client, {
+        "username": "teacher",
+        "competition_name": "Trade Participation Cup",
+        "curriculumEnabled": True,
+        "curriculumWeeks": 2,
+        "curriculumStartDate": "2026-03-15",
+        "curriculumEndDate": "2026-05-15",
+    })
+    assert resp.status_code == 200
+
+    with app_module.app.app_context():
+        comp = app_module.Competition.query.filter_by(name="Trade Participation Cup").first()
+        student = app_module.User.query.filter_by(username="student").first()
+        app_module.db.session.add(app_module.CompetitionMember(competition_id=comp.id, user_id=student.id, cash_balance=100000))
+        app_module.db.session.commit()
+        competition_id = comp.id
+        competition_code = comp.code
+        student_id = student.id
+
+    monkeypatch.setattr(app_module, "get_current_price", lambda symbol: 100.0)
+    trade_resp = client.post(
+        "/competition/buy",
+        json={"username": "student", "competition_id": competition_id, "competition_code": competition_code, "symbol": "AAPL", "quantity": 1},
+    )
+    assert trade_resp.status_code == 200
+
+    grades_resp = client.get(
+        f"/curriculum/competition/{competition_id}/grades/{student_id}",
+        query_string={"username": "student"},
+    )
+    assert grades_resp.status_code == 200
+    module_grades = grades_resp.get_json()["moduleGrades"]
+    assert module_grades
+    assert module_grades[0]["tradeParticipation"]["tradeCompleted"] is True
+    assert module_grades[0]["tradeParticipation"]["tradePoints"] == 10
+
+    competition_gradebook_resp = client.get(
+        f"/curriculum/competition/{competition_id}/grades",
+        query_string={"username": "teacher"},
+    )
+    assert competition_gradebook_resp.status_code == 200
+    assert competition_gradebook_resp.get_json()["studentCount"] == 1
 
 
 def test_curriculum_summary_accepts_competition_member_account_id(app_client):
