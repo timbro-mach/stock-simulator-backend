@@ -2296,15 +2296,26 @@ def curriculum_modules(competition_id):
 @app.route('/curriculum/competition/<int:competition_id>/grades/<int:user_id>', methods=['GET'])
 def curriculum_grades(competition_id, user_id):
     requester = request.args.get("username")
-    requesting_user = User.query.filter_by(username=requester).first() if requester else None
+    if not requester:
+        return jsonify({"message": "Authentication required"}), 401
+    requesting_user = User.query.filter_by(username=requester).first()
     resolved_competition_id = _resolve_curriculum_competition_id(competition_id)
     competition = db.session.get(Competition, resolved_competition_id)
     if not competition:
         return jsonify({"message": "Competition not found"}), 404
     if not requesting_user:
-        return jsonify({"message": "Requesting user not found"}), 404
+        return jsonify({"message": "Invalid credentials"}), 401
     if requesting_user.id != user_id and not _is_competition_instructor(requesting_user, competition):
         return jsonify({"message": "Forbidden"}), 403
+    target_user = db.session.get(User, user_id)
+    if not target_user:
+        return jsonify({"message": "User not found"}), 404
+    competition_membership = CompetitionMember.query.filter_by(
+        competition_id=resolved_competition_id,
+        user_id=user_id,
+    ).first()
+    if not competition_membership:
+        return jsonify({"message": "No grade records found for this user in the specified competition"}), 404
 
     summary = _compute_grade_summary(resolved_competition_id, user_id)
     if summary is None:
