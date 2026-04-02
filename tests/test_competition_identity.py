@@ -74,6 +74,54 @@ def test_competition_lookup_by_code_returns_primary_key_id(app_client):
     assert payload["competition_code"] == created_code
 
 
+def test_competition_lookup_by_code_matches_competitions_shape(app_client):
+    client, app_module = app_client
+    create_user(app_module, username="teacher", email="teacher@example.com")
+    create_resp = client.post(
+        "/competition/create",
+        json={
+            "username": "teacher",
+            "competition_name": "Shape Cup",
+            "curriculumEnabled": True,
+            "curriculumWeeks": 2,
+            "curriculumStartDate": "2026-03-01",
+            "curriculumEndDate": "2026-03-15",
+        },
+    )
+    assert create_resp.status_code == 200
+    created_code = create_resp.get_json()["competition_code"]
+
+    list_resp = client.get("/competitions")
+    assert list_resp.status_code == 200
+    list_payload = list_resp.get_json()
+    list_entry = next(item for item in list_payload if item["code"] == created_code)
+
+    lookup_resp = client.get(f"/competition/by_code/{created_code}")
+    assert lookup_resp.status_code == 200
+    lookup_payload = lookup_resp.get_json()
+
+    assert lookup_payload == list_entry
+    for required_field in (
+        "id",
+        "competition_id",
+        "code",
+        "competition_code",
+        "name",
+        "competition_name",
+    ):
+        assert required_field in lookup_payload
+    assert lookup_payload["id"] is not None
+    assert lookup_payload["competition_id"] == lookup_payload["id"]
+
+
+def test_competition_lookup_by_code_returns_404_when_not_found(app_client):
+    client, _ = app_client
+
+    lookup_resp = client.get("/competition/by_code/not-a-real-code")
+    assert lookup_resp.status_code == 404
+    assert lookup_resp.get_json()["message"] == "Competition not found"
+
+
 def test_admin_competitions_payload_includes_id_and_curriculum_metadata(app_client):
     client, app_module = app_client
     create_user(app_module, username="admin", email="admin@example.com", is_admin=True)
