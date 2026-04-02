@@ -652,16 +652,27 @@ def _serialize_competition_identity(competition):
     payload = {
         "id": competition.id,
         "competition_id": competition.id,
+        "competitionId": competition.id,
         "code": competition.code,
         "competition_code": competition.code,
+        "competitionCode": competition.code,
         "name": competition.name,
         "competition_name": competition.name,
+        "competitionName": competition.name,
         "start_date": competition.start_date.isoformat() if competition.start_date else None,
         "end_date": competition.end_date.isoformat() if competition.end_date else None,
         "featured": competition.featured,
         "is_open": competition.is_open,
         "curriculum_enabled": curriculum_enabled,
         "curriculumEnabled": curriculum_enabled,
+        "curriculum_id": None,
+        "curriculumId": None,
+        "curriculum_weeks": None,
+        "curriculumWeeks": None,
+        "curriculum_start_date": None,
+        "curriculumStartDate": None,
+        "curriculum_end_date": None,
+        "curriculumEndDate": None,
     }
     if curriculum:
         payload.update({
