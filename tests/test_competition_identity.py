@@ -70,6 +70,7 @@ def test_competition_lookup_by_code_returns_primary_key_id(app_client):
     payload = lookup_resp.get_json()
     assert payload["id"] > 0
     assert payload["competition_id"] == payload["id"]
+    assert payload["competitionId"] == payload["id"]
     assert payload["code"] == created_code
     assert payload["competition_code"] == created_code
 
@@ -104,10 +105,19 @@ def test_competition_lookup_by_code_matches_competitions_shape(app_client):
     for required_field in (
         "id",
         "competition_id",
+        "competitionId",
         "code",
         "competition_code",
         "name",
         "competition_name",
+        "curriculum_id",
+        "curriculumId",
+        "curriculum_weeks",
+        "curriculumWeeks",
+        "curriculum_start_date",
+        "curriculumStartDate",
+        "curriculum_end_date",
+        "curriculumEndDate",
     ):
         assert required_field in lookup_payload
     assert lookup_payload["id"] is not None
