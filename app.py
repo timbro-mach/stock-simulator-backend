@@ -361,6 +361,13 @@ def _parse_iso_date(value, field_name):
         raise ValueError(f"Invalid {field_name}. Expected YYYY-MM-DD format.")
 
 
+def _first_present(data, *keys, default=None):
+    for key in keys:
+        if key in data and data.get(key) is not None:
+            return data.get(key)
+    return default
+
+
 def _validate_curriculum_window(total_weeks, start_date, end_date):
     if total_weeks is None:
         raise ValueError("curriculumWeeks is required when curriculumEnabled is true.")
@@ -536,6 +543,25 @@ def generate_curriculum_for_competition(competition_id, total_weeks, start_date,
 
     db.session.flush()
     return curriculum
+
+
+def _delete_curriculum_for_competition(competition_id):
+    curriculum = Curriculum.query.filter_by(competition_id=competition_id).first()
+    if not curriculum:
+        return
+
+    module_ids = [m.id for m in CurriculumModule.query.filter_by(curriculum_id=curriculum.id).all()]
+    if module_ids:
+        assignment_ids = [a.id for a in CurriculumAssignment.query.filter(CurriculumAssignment.module_id.in_(module_ids)).all()]
+        if assignment_ids:
+            CurriculumSubmission.query.filter(
+                CurriculumSubmission.assignment_id.in_(assignment_ids)
+            ).delete(synchronize_session=False)
+        CurriculumAssignment.query.filter(
+            CurriculumAssignment.module_id.in_(module_ids)
+        ).delete(synchronize_session=False)
+    CurriculumModule.query.filter_by(curriculum_id=curriculum.id).delete(synchronize_session=False)
+    db.session.delete(curriculum)
 
 
 def _is_competition_instructor(user, competition):
@@ -1863,10 +1889,10 @@ def create_competition():
     max_position_limit = data.get('max_position_limit')
     feature_competition = data.get('feature_competition', False)
     is_open = data.get('is_open', True)
-    curriculum_enabled = bool(data.get('curriculumEnabled', False))
-    curriculum_weeks = data.get('curriculumWeeks')
-    curriculum_start_date_str = data.get('curriculumStartDate')
-    curriculum_end_date_str = data.get('curriculumEndDate')
+    curriculum_enabled = bool(_first_present(data, 'curriculumEnabled', 'curriculum_enabled', default=False))
+    curriculum_weeks = _first_present(data, 'curriculumWeeks', 'curriculum_weeks')
+    curriculum_start_date_str = _first_present(data, 'curriculumStartDate', 'curriculum_start_date')
+    curriculum_end_date_str = _first_present(data, 'curriculumEndDate', 'curriculum_end_date')
     user = User.query.filter_by(username=username).first()
     if not user:
         return jsonify({'message': 'User not found'}), 404
@@ -2147,19 +2173,20 @@ def curriculum_get_submission(assignment_id, user_id):
 def curriculum_instructor_overview(competition_id):
     requester = request.args.get("username")
     user = User.query.filter_by(username=requester).first() if requester else None
-    competition = db.session.get(Competition, competition_id)
+    resolved_competition_id = _resolve_curriculum_competition_id(competition_id)
+    competition = db.session.get(Competition, resolved_competition_id)
     if not competition:
         return jsonify({"message": "Competition not found"}), 404
     if not _is_competition_instructor(user, competition):
         return jsonify({"message": "Instructor access required"}), 403
-    curriculum = Curriculum.query.filter_by(competition_id=competition_id, enabled=True).first()
+    curriculum = Curriculum.query.filter_by(competition_id=resolved_competition_id, enabled=True).first()
     if not curriculum:
         return jsonify({"message": "Curriculum not enabled for this competition"}), 404
     modules = CurriculumModule.query.filter_by(curriculum_id=curriculum.id).all()
     module_ids = [m.id for m in modules]
     assignments = CurriculumAssignment.query.filter(CurriculumAssignment.module_id.in_(module_ids)).all() if module_ids else []
     assignment_ids = [a.id for a in assignments]
-    member_ids = [m.user_id for m in CompetitionMember.query.filter_by(competition_id=competition_id).all()]
+    member_ids = [m.user_id for m in CompetitionMember.query.filter_by(competition_id=resolved_competition_id).all()]
     submissions = CurriculumSubmission.query.filter(
         CurriculumSubmission.assignment_id.in_(assignment_ids),
         CurriculumSubmission.user_id.in_(member_ids)
@@ -2190,7 +2217,7 @@ def curriculum_instructor_overview(competition_id):
     class_avg = round(sum(row["percentage"] for row in student_rows) / len(student_rows), 2) if student_rows else 0.0
     class_completion = round(sum(row["completionRate"] for row in student_rows) / len(student_rows), 2) if student_rows else 0.0
     return jsonify({
-        "competitionId": competition_id,
+        "competitionId": resolved_competition_id,
         "curriculumId": curriculum.id,
         "students": student_rows,
         "classAveragePercentage": class_avg,
@@ -2792,6 +2819,8 @@ def admin_delete_competition():
         return jsonify({'message': 'Competition not found'}), 404
 
     try:
+        _delete_curriculum_for_competition(comp.id)
+
         # --- Remove all related members & holdings ---
         CompetitionHolding.query.filter(
             CompetitionHolding.competition_member_id.in_(
