@@ -161,6 +161,9 @@ class CurriculumSubmission(db.Model):
     question_1_score = db.Column(db.Float, nullable=True)
     question_2_score = db.Column(db.Float, nullable=True)
     assignment_total_score = db.Column(db.Float, nullable=True)
+    graded_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True, index=True)
+    graded_at = db.Column(db.DateTime, nullable=True)
+    rubric_notes = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     # Duplicate submission rule: keep one active submission per user per assignment and overwrite on re-submit.
@@ -320,6 +323,9 @@ def ensure_schema_compatibility():
                 'question_1_score': 'DOUBLE PRECISION',
                 'question_2_score': 'DOUBLE PRECISION',
                 'assignment_total_score': 'DOUBLE PRECISION',
+                'graded_by_user_id': 'INTEGER',
+                'graded_at': 'TIMESTAMP',
+                'rubric_notes': 'TEXT',
             }
             for col_name, col_type in submission_needed.items():
                 if col_name in existing_cols:
@@ -830,6 +836,156 @@ def _compute_grade_summary(competition_id, user_id):
         "items": module_breakdown,
         "additionalAssessments": additional_items,
     }
+
+
+def _grade_letter_from_percentage(overall_pct):
+    if overall_pct >= 90:
+        return "A"
+    if overall_pct >= 80:
+        return "B"
+    if overall_pct >= 70:
+        return "C"
+    if overall_pct >= 60:
+        return "D"
+    return "F"
+
+
+def _written_submission_status(submission):
+    if not submission:
+        return "not_submitted"
+    pending_flag = bool((submission.feedback_json or {}).get("pendingManualGrade", False))
+    if submission.graded_at is not None:
+        return "graded"
+    if pending_flag:
+        return "pending_grade"
+    if submission.assignment_total_score is not None:
+        return "graded"
+    return "pending_grade"
+
+
+def _evaluate_assignment_for_gradebook(assignment, submission):
+    points_possible = float(assignment.points or 0.0)
+    if assignment.type in ("assignment", "written_assignment"):
+        status = _written_submission_status(submission)
+        points_earned = round(float(submission.assignment_total_score if submission and submission.assignment_total_score is not None else 0.0), 2)
+        percentage = round((points_earned / points_possible * 100.0), 2) if points_possible else 0.0
+        return {
+            "status": status,
+            "pointsEarned": points_earned,
+            "pointsPossible": points_possible,
+            "percentage": percentage,
+            "isManuallyGradable": True,
+        }
+
+    if not submission:
+        return {
+            "status": "not_submitted",
+            "pointsEarned": 0.0,
+            "pointsPossible": points_possible,
+            "percentage": 0.0,
+            "isManuallyGradable": False,
+        }
+
+    points_earned = round(float(submission.score or 0.0), 2)
+    percentage = round(float(submission.percentage or 0.0), 2)
+    return {
+        "status": "graded" if submission.auto_graded else "submitted",
+        "pointsEarned": points_earned,
+        "pointsPossible": points_possible,
+        "percentage": percentage,
+        "isManuallyGradable": False,
+    }
+
+
+def _build_teacher_grade_rows(competition, curriculum, member_ids):
+    modules = CurriculumModule.query.filter_by(curriculum_id=curriculum.id).order_by(CurriculumModule.week_number.asc()).all()
+    module_ids = [m.id for m in modules]
+    assignments = CurriculumAssignment.query.filter(CurriculumAssignment.module_id.in_(module_ids)).all() if module_ids else []
+    assignment_ids = [a.id for a in assignments]
+    submissions = CurriculumSubmission.query.filter(
+        CurriculumSubmission.competition_id == competition.id,
+        CurriculumSubmission.user_id.in_(member_ids),
+        CurriculumSubmission.assignment_id.in_(assignment_ids),
+    ).all() if assignment_ids and member_ids else []
+
+    submissions_by_user = {}
+    grader_ids = set()
+    for sub in submissions:
+        submissions_by_user.setdefault(sub.user_id, {})[sub.assignment_id] = sub
+        if sub.graded_by_user_id:
+            grader_ids.add(sub.graded_by_user_id)
+    graders_by_id = {u.id: u for u in User.query.filter(User.id.in_(grader_ids)).all()} if grader_ids else {}
+
+    assignment_by_module = {}
+    for assignment in assignments:
+        assignment_by_module.setdefault(assignment.module_id, []).append(assignment)
+
+    trade_count_rows = db.session.query(
+        TradeBlotterEntry.user_id,
+        func.count(TradeBlotterEntry.id)
+    ).filter(
+        TradeBlotterEntry.user_id.in_(member_ids),
+        TradeBlotterEntry.account_context == f"competition:{competition.code}"
+    ).group_by(TradeBlotterEntry.user_id).all() if member_ids else []
+    trade_count_by_user = {row[0]: int(row[1]) for row in trade_count_rows}
+
+    rows = {}
+    for uid in member_ids:
+        total_points_earned = 0.0
+        total_points_possible = 0.0
+        completed_quizzes = 0
+        completed_assignments = 0
+        total_curriculum_items = 0
+        items = []
+
+        for module in modules:
+            for assignment in assignment_by_module.get(module.id, []):
+                total_curriculum_items += 1
+                sub = submissions_by_user.get(uid, {}).get(assignment.id)
+                evaluated = _evaluate_assignment_for_gradebook(assignment, sub)
+                total_points_earned += evaluated["pointsEarned"]
+                total_points_possible += evaluated["pointsPossible"]
+                if assignment.type == "quiz" and sub:
+                    completed_quizzes += 1
+                if assignment.type in ("assignment", "written_assignment") and sub:
+                    completed_assignments += 1
+
+                grader = graders_by_id.get(sub.graded_by_user_id) if sub and sub.graded_by_user_id else None
+                items.append({
+                    "moduleId": module.id,
+                    "moduleWeek": module.week_number,
+                    "moduleTitle": module.title,
+                    "assignmentId": assignment.id,
+                    "assignmentType": assignment.type,
+                    "title": assignment.title,
+                    "pointsEarned": evaluated["pointsEarned"],
+                    "pointsPossible": evaluated["pointsPossible"],
+                    "percentage": evaluated["percentage"],
+                    "gradingStatus": evaluated["status"],
+                    "isManuallyGradable": evaluated["isManuallyGradable"],
+                    "submittedAt": sub.submitted_at.isoformat() if sub else None,
+                    "submissionContent": sub.answers_json if sub else None,
+                    "feedback": (sub.feedback_json or {}) if sub else {},
+                    "rubricNotes": sub.rubric_notes if sub else None,
+                    "gradedByUserId": sub.graded_by_user_id if sub else None,
+                    "gradedByUsername": grader.username if grader else None,
+                    "gradedAt": sub.graded_at.isoformat() if sub and sub.graded_at else None,
+                })
+
+        percentage = round((total_points_earned / total_points_possible * 100.0), 2) if total_points_possible else 0.0
+        rows[uid] = {
+            "curriculumPercentage": percentage,
+            "letterGrade": _grade_letter_from_percentage(percentage),
+            "totalPointsEarned": round(total_points_earned, 2),
+            "totalPointsPossible": round(total_points_possible, 2),
+            "completedQuizzes": completed_quizzes,
+            "completedAssignments": completed_assignments,
+            "totalCurriculumItems": total_curriculum_items,
+            "hasTrades": trade_count_by_user.get(uid, 0) > 0,
+            "tradeCount": trade_count_by_user.get(uid, 0),
+            "items": items,
+        }
+    return rows
 
 
 def _resolve_curriculum_competition_id(raw_competition_id):
@@ -2391,6 +2547,10 @@ def curriculum_submit_assignment(assignment_id):
                 "question1Score": sub.question_1_score,
                 "question2Score": sub.question_2_score,
                 "assignmentTotalScore": sub.assignment_total_score,
+                "gradingStatus": _written_submission_status(sub) if assignment.type == "assignment" else ("graded" if sub.auto_graded else "submitted"),
+                "gradedByUserId": sub.graded_by_user_id,
+                "gradedAt": sub.graded_at.isoformat() if sub.graded_at else None,
+                "rubricNotes": sub.rubric_notes,
             })
         return jsonify({
             "assignmentId": assignment_id,
@@ -2472,8 +2632,10 @@ def curriculum_submit_assignment(assignment_id):
         "assignmentId": assignment_id,
         "userId": user.id,
         "score": submission.score,
+        "pointsEarned": submission.score,
         "pointsPossible": assignment.points,
         "percentage": submission.percentage,
+        "status": "graded" if submission.auto_graded else "pending_grade",
         "autoGraded": submission.auto_graded,
         "submittedAt": submission.submitted_at.isoformat(),
         "feedback": submission.feedback_json,
@@ -2514,6 +2676,10 @@ def curriculum_get_submission(assignment_id, user_id):
         "question1Score": submission.question_1_score,
         "question2Score": submission.question_2_score,
         "assignmentTotalScore": submission.assignment_total_score,
+        "gradingStatus": _written_submission_status(submission) if assignment.type == "assignment" else ("graded" if submission.auto_graded else "submitted"),
+        "gradedByUserId": submission.graded_by_user_id,
+        "gradedAt": submission.graded_at.isoformat() if submission.graded_at else None,
+        "rubricNotes": submission.rubric_notes,
     })
 
 
@@ -2541,62 +2707,71 @@ def curriculum_grade_submission(submission_id):
         feedback["instructorComment"] = data.get("feedback")
     if "comments" in data:
         feedback["comments"] = data.get("comments")
+    if "rubric_notes" in data:
+        feedback["rubricNotes"] = data.get("rubric_notes")
 
     if assignment.type == "assignment":
+        score_input = data.get("score")
         q1_input = data.get("question_1_score", data.get("question1Score"))
         q2_input = data.get("question_2_score", data.get("question2Score"))
-        if q1_input is None or q2_input is None:
-            return jsonify({"message": "question_1_score and question_2_score are required for written assignments"}), 400
+        if score_input is None and (q1_input is None or q2_input is None):
+            return jsonify({"message": "score is required"}), 422
         try:
-            q1_score = float(q1_input)
-            q2_score = float(q2_input)
+            if score_input is not None:
+                total_score = float(score_input)
+                q1_score = None
+                q2_score = None
+            else:
+                q1_score = float(q1_input)
+                q2_score = float(q2_input)
+                total_score = float(q1_score + q2_score)
         except (TypeError, ValueError):
-            return jsonify({"message": "question scores must be numeric"}), 400
-        if q1_score < 0 or q2_score < 0:
-            return jsonify({"message": "question scores cannot be negative"}), 400
-        q1_score = min(q1_score, 10.0)
-        q2_score = min(q2_score, 10.0)
-        total_score = round(q1_score + q2_score, 2)
-        submission.question_1_score = round(q1_score, 2)
-        submission.question_2_score = round(q2_score, 2)
-        submission.assignment_total_score = total_score
-        submission.score = total_score
-        submission.percentage = round((total_score / 20.0) * 100.0, 2)
+            return jsonify({"message": "score must be numeric"}), 422
+        if total_score < 0:
+            return jsonify({"message": "score must be greater than or equal to 0"}), 422
+        if assignment.points is not None and total_score > assignment.points:
+            return jsonify({"message": "score must be less than or equal to points possible"}), 422
+        submission.question_1_score = round(q1_score, 2) if q1_score is not None else None
+        submission.question_2_score = round(q2_score, 2) if q2_score is not None else None
+        submission.assignment_total_score = round(total_score, 2)
+        submission.score = round(total_score, 2)
+        if "percentage" in data and data.get("percentage") is not None:
+            try:
+                submission.percentage = round(float(data.get("percentage")), 2)
+            except (TypeError, ValueError):
+                return jsonify({"message": "percentage must be numeric"}), 422
+        else:
+            submission.percentage = round((total_score / assignment.points * 100.0) if assignment.points else 0.0, 2)
         feedback["pendingManualGrade"] = False
     else:
-        score_input = data.get("score")
-        if score_input is None:
-            return jsonify({"message": "score is required"}), 400
-        try:
-            score = float(score_input)
-        except (TypeError, ValueError):
-            return jsonify({"message": "score must be numeric"}), 400
-        if score < 0:
-            return jsonify({"message": "score cannot be negative"}), 400
-        if assignment.points is not None and score > assignment.points:
-            score = float(assignment.points)
-        submission.question_1_score = None
-        submission.question_2_score = None
-        submission.assignment_total_score = None
-        submission.score = round(score, 2)
-        submission.percentage = round((score / assignment.points * 100.0) if assignment.points else 0.0, 2)
+        return jsonify({"message": "Only written assignments can be manually graded at this endpoint"}), 422
 
     submission.auto_graded = False
+    submission.graded_by_user_id = user.id
+    submission.graded_at = datetime.utcnow()
+    submission.rubric_notes = data.get("rubric_notes")
     submission.feedback_json = feedback
     db.session.commit()
+    updated_summary = _compute_grade_summary(curriculum.competition_id, submission.user_id)
 
     return jsonify({
         "submissionId": submission.id,
         "assignmentId": assignment.id,
         "userId": submission.user_id,
         "score": submission.score,
+        "pointsEarned": submission.score,
         "pointsPossible": assignment.points,
         "percentage": submission.percentage,
+        "status": "graded",
         "autoGraded": submission.auto_graded,
         "feedback": submission.feedback_json,
         "question1Score": submission.question_1_score,
         "question2Score": submission.question_2_score,
         "assignmentTotalScore": submission.assignment_total_score,
+        "gradedByUserId": submission.graded_by_user_id,
+        "gradedAt": submission.graded_at.isoformat() if submission.graded_at else None,
+        "rubricNotes": submission.rubric_notes,
+        "gradeSummary": updated_summary,
     })
 
 
@@ -2764,6 +2939,157 @@ def curriculum_instructor_overview(competition_id):
         "totalAssignments": len(assignments),
         "totalStudents": len(member_ids),
     })
+
+
+@app.route('/curriculum/competition/<int:competition_id>/teacher/roster', methods=['GET'])
+def curriculum_teacher_roster(competition_id):
+    requester = request.args.get("username")
+    if not requester:
+        return jsonify({"message": "Authentication required"}), 401
+    requesting_user = User.query.filter_by(username=requester).first()
+    if not requesting_user:
+        return jsonify({"message": "Invalid credentials"}), 401
+
+    competition = db.session.get(Competition, competition_id)
+    if not competition:
+        return jsonify({"message": "Competition not found"}), 404
+    if not _is_competition_instructor(requesting_user, competition):
+        return jsonify({"message": "Instructor access required"}), 403
+
+    curriculum = Curriculum.query.filter_by(competition_id=competition_id, enabled=True).first()
+    if not curriculum:
+        return jsonify({"message": "Curriculum not enabled for this competition"}), 404
+
+    members = CompetitionMember.query.filter_by(competition_id=competition_id).all()
+    member_ids = [m.user_id for m in members]
+    users = User.query.filter(User.id.in_(member_ids)).all() if member_ids else []
+    users_by_id = {u.id: u for u in users}
+    grade_rows = _build_teacher_grade_rows(competition, curriculum, member_ids)
+
+    roster = []
+    for uid in member_ids:
+        user = users_by_id.get(uid)
+        grade = grade_rows.get(uid, {})
+        roster.append({
+            "userId": uid,
+            "displayName": user.username if user else f"user-{uid}",
+            "email": user.email if user else None,
+            "curriculumPercentage": grade.get("curriculumPercentage", 0.0),
+            "letterGrade": grade.get("letterGrade", "F"),
+            "totalPointsEarned": grade.get("totalPointsEarned", 0.0),
+            "totalPointsPossible": grade.get("totalPointsPossible", 0.0),
+            "completedQuizzes": grade.get("completedQuizzes", 0),
+            "completedAssignments": grade.get("completedAssignments", 0),
+            "totalCurriculumItems": grade.get("totalCurriculumItems", 0),
+            "hasTrades": grade.get("hasTrades", False),
+            "tradeCount": grade.get("tradeCount", 0),
+        })
+
+    return jsonify({
+        "competitionId": competition_id,
+        "curriculumId": curriculum.id,
+        "roster": roster,
+    }), 200
+
+
+@app.route('/curriculum/competition/<int:competition_id>/teacher/students/<int:student_id>', methods=['GET'])
+def curriculum_teacher_student_detail(competition_id, student_id):
+    requester = request.args.get("username")
+    if not requester:
+        return jsonify({"message": "Authentication required"}), 401
+    requesting_user = User.query.filter_by(username=requester).first()
+    if not requesting_user:
+        return jsonify({"message": "Invalid credentials"}), 401
+
+    competition = db.session.get(Competition, competition_id)
+    if not competition:
+        return jsonify({"message": "Competition not found"}), 404
+    if not _is_competition_instructor(requesting_user, competition):
+        return jsonify({"message": "Instructor access required"}), 403
+
+    curriculum = Curriculum.query.filter_by(competition_id=competition_id, enabled=True).first()
+    if not curriculum:
+        return jsonify({"message": "Curriculum not enabled for this competition"}), 404
+
+    membership = CompetitionMember.query.filter_by(competition_id=competition_id, user_id=student_id).first()
+    if not membership:
+        return jsonify({"message": "Student not found in competition"}), 404
+    student = db.session.get(User, student_id)
+    if not student:
+        return jsonify({"message": "User not found"}), 404
+
+    grade_rows = _build_teacher_grade_rows(competition, curriculum, [student_id])
+    grade = grade_rows.get(student_id) or {}
+    items = grade.get("items", [])
+
+    return jsonify({
+        "competitionId": competition_id,
+        "curriculumId": curriculum.id,
+        "student": {
+            "userId": student.id,
+            "displayName": student.username,
+            "email": student.email,
+        },
+        "gradeSummary": {
+            "curriculumPercentage": grade.get("curriculumPercentage", 0.0),
+            "letterGrade": grade.get("letterGrade", "F"),
+            "totalPointsEarned": grade.get("totalPointsEarned", 0.0),
+            "totalPointsPossible": grade.get("totalPointsPossible", 0.0),
+            "completedQuizzes": grade.get("completedQuizzes", 0),
+            "completedAssignments": grade.get("completedAssignments", 0),
+            "totalCurriculumItems": grade.get("totalCurriculumItems", 0),
+            "hasTrades": grade.get("hasTrades", False),
+            "tradeCount": grade.get("tradeCount", 0),
+        },
+        "items": items,
+    }), 200
+
+
+@app.route('/curriculum/competition/<int:competition_id>/teacher/students/<int:student_id>/trades', methods=['GET'])
+def curriculum_teacher_student_trades(competition_id, student_id):
+    requester = request.args.get("username")
+    if not requester:
+        return jsonify({"message": "Authentication required"}), 401
+    requesting_user = User.query.filter_by(username=requester).first()
+    if not requesting_user:
+        return jsonify({"message": "Invalid credentials"}), 401
+
+    competition = db.session.get(Competition, competition_id)
+    if not competition:
+        return jsonify({"message": "Competition not found"}), 404
+    if not _is_competition_instructor(requesting_user, competition):
+        return jsonify({"message": "Instructor access required"}), 403
+
+    membership = CompetitionMember.query.filter_by(competition_id=competition_id, user_id=student_id).first()
+    if not membership:
+        return jsonify({"message": "Student not found in competition"}), 404
+
+    entries = TradeBlotterEntry.query.filter(
+        TradeBlotterEntry.user_id == student_id,
+        TradeBlotterEntry.account_context == f"competition:{competition.code}",
+    ).order_by(TradeBlotterEntry.created_at.desc()).all()
+
+    rows = []
+    for entry in entries:
+        serialized = _serialize_trade_blotter_entry(entry)
+        rows.append({
+            "tradeId": serialized["id"],
+            "timestamp": serialized["executed_at"],
+            "symbol": serialized["symbol"],
+            "side": serialized["side"],
+            "quantity": serialized["quantity"],
+            "price": serialized["price"],
+            "orderType": serialized["order_type"],
+            "status": "filled",
+            "accountName": serialized["account_display_name"],
+            "accountContext": serialized["account_context"],
+        })
+
+    return jsonify({
+        "competitionId": competition_id,
+        "studentId": student_id,
+        "trades": rows,
+    }), 200
 
 
 @app.route('/competition/buy', methods=['POST'])
