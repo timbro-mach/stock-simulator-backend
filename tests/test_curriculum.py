@@ -727,6 +727,8 @@ def test_teacher_manual_grade_updates_summary_and_trade_blotter_endpoint(app_cli
     grade_payload = grade_resp.get_json()
     assert grade_payload["score"] == 18
     assert grade_payload["status"] == "graded"
+    assert grade_payload["gradingStatus"] == "graded"
+    assert grade_payload["isManuallyGradable"] is True
     assert grade_payload["gradeSummary"]["totalPointsEarned"] >= 18
 
     post_detail_resp = client.get(
@@ -754,6 +756,105 @@ def test_teacher_manual_grade_updates_summary_and_trade_blotter_endpoint(app_cli
     assert trades
     assert trades[0]["symbol"] == "AAPL"
     assert trades[0]["side"] == "buy"
+
+
+def test_grade_summary_uses_released_graded_scope_and_95_percent_quiz_case(app_client):
+    client, app_module = app_client
+    competition_id, _competition_code, student_id, quiz_id, _written_id = _setup_teacher_dashboard_case(
+        client, app_module, competition_name="Released Scope Cup"
+    )
+    with app_module.app.app_context():
+        quiz = app_module.db.session.get(app_module.CurriculumAssignment, quiz_id)
+        answer_items = list(quiz.answer_key_json["questions"].items())
+        mostly_correct_answers = {
+            qid: ("__wrong__" if idx == 0 else expected)
+            for idx, (qid, expected) in enumerate(answer_items)
+        }
+
+    submit_resp = client.post(
+        f"/curriculum/assignments/{quiz_id}/submissions",
+        json={"username": "student", "competition_id": competition_id, "answers": mostly_correct_answers},
+    )
+    assert submit_resp.status_code == 200
+    assert submit_resp.get_json()["score"] == 19
+
+    student_grade_resp = client.get(
+        f"/curriculum/competition/{competition_id}/grades/{student_id}",
+        query_string={"username": "student"},
+    )
+    assert student_grade_resp.status_code == 200
+    student_grade_payload = student_grade_resp.get_json()
+    assert student_grade_payload["totalPointsEarned"] == 19.0
+    assert student_grade_payload["totalPointsPossible"] == 20.0
+    assert student_grade_payload["percentage"] == 95.0
+    assert student_grade_payload["grade_summary_overall"]["percentage"] == 95.0
+    assert student_grade_payload["grade_summary_by_module"]
+
+    roster_resp = client.get(
+        f"/curriculum/competition/{competition_id}/teacher/roster",
+        query_string={"username": "teacher"},
+    )
+    assert roster_resp.status_code == 200
+    roster_row = next(row for row in roster_resp.get_json()["roster"] if row["userId"] == student_id)
+    assert roster_row["curriculumPercentage"] == 95.0
+    assert roster_row["totalPointsEarned"] == 19.0
+    assert roster_row["totalPointsPossible"] == 20.0
+    assert roster_row["grade_summary_by_module"]
+
+    detail_resp = client.get(
+        f"/curriculum/competition/{competition_id}/teacher/students/{student_id}",
+        query_string={"username": "teacher"},
+    )
+    assert detail_resp.status_code == 200
+    detail_payload = detail_resp.get_json()
+    assert detail_payload["gradeSummary"]["curriculumPercentage"] == 95.0
+    assert detail_payload["grade_summary_by_module"] == roster_row["grade_summary_by_module"]
+
+
+def test_pending_written_submission_exposes_manual_grading_metadata_and_transitions(app_client):
+    client, app_module = app_client
+    competition_id, _competition_code, student_id, _quiz_id, written_id = _setup_teacher_dashboard_case(
+        client, app_module, competition_name="Pending Metadata Cup"
+    )
+
+    submit_resp = client.post(
+        f"/curriculum/assignments/{written_id}/submissions",
+        json={"username": "student", "competition_id": competition_id, "answers": {"q1": "alpha", "q2": "beta"}},
+    )
+    assert submit_resp.status_code == 200
+    submit_payload = submit_resp.get_json()
+    assert submit_payload["status"] == "pending_grade"
+    assert submit_payload["isManuallyGradable"] is True
+    submission_id = submit_payload["submissionId"]
+
+    detail_before = client.get(
+        f"/curriculum/competition/{competition_id}/teacher/students/{student_id}",
+        query_string={"username": "teacher"},
+    ).get_json()
+    before_item = next(item for item in detail_before["items"] if item["assignmentType"] == "assignment")
+    assert before_item["gradingStatus"] == "pending_grade"
+    assert before_item["submissionId"] == submission_id
+
+    grade_resp = client.post(
+        f"/curriculum/submissions/{submission_id}/grade",
+        json={
+            "username": "teacher",
+            "score": 16,
+            "feedback": "Solid analysis",
+            "rubric_notes": "Meets expectations",
+        },
+    )
+    assert grade_resp.status_code == 200
+    grade_payload = grade_resp.get_json()
+    assert grade_payload["gradingStatus"] == "graded"
+
+    detail_after = client.get(
+        f"/curriculum/competition/{competition_id}/teacher/students/{student_id}",
+        query_string={"username": "teacher"},
+    ).get_json()
+    after_item = next(item for item in detail_after["items"] if item["assignmentType"] == "assignment")
+    assert after_item["gradingStatus"] == "graded"
+    assert after_item["pointsEarned"] == 16.0
 
 
 def test_student_cannot_access_teacher_dashboard_routes(app_client):

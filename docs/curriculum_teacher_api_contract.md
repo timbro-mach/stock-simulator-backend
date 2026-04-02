@@ -58,6 +58,7 @@ Stored canonical shape in `curriculum_submission.answers_json`:
 
 - `competitionId`, `competition_id`
 - `assignmentId`, `userId`
+- `submissionId`
 - `answers` (canonical stored submission content)
 - `score`
 - `pointsEarned`
@@ -65,6 +66,7 @@ Stored canonical shape in `curriculum_submission.answers_json`:
 - `percentage`
 - `status` (`graded`, `submitted`, or `pending_grade`)
 - `autoGraded`
+- `isManuallyGradable`
 - `submittedAt`
 - `feedback`
 
@@ -77,6 +79,54 @@ Written assignment behavior:
 
 - Stored with full structured content (including `parts`).
 - Returns `status: "pending_grade"` with manual grading metadata.
+
+## Grade summary aggregation contract
+
+All student/teacher curriculum-grade surfaces now use the same aggregation scope:
+
+- Scope: **released modules only** (`module.unlock_date <= now`) and **graded items only** (auto-graded quiz/exam submissions + manually graded written submissions).
+- Pending manual grades (`pending_grade`) are visible in item rows but excluded from denominator until graded.
+- Future modules are excluded from denominator.
+
+Every grade summary payload includes:
+
+- `grade_summary_overall`
+  - `scope` (`released_modules_graded_items`)
+  - `points_earned`
+  - `points_possible`
+  - `percentage`
+  - `letter`
+- `grade_summary_by_module[]`
+  - `module_id`
+  - `week`
+  - `points_earned`
+  - `points_possible`
+  - `percentage`
+  - `letter`
+  - `status` (`graded`, `pending_grade`, `not_started`)
+
+Also available in camelCase aliases: `gradeSummaryOverall`, `gradeSummaryByModule`.
+
+## Manual grading endpoint contract
+
+`POST /curriculum/submissions/:submissionId/grade`
+
+Required:
+
+- `username: string` (must be competition instructor/admin)
+- `score: number` **or** (`question_1_score` + `question_2_score`)
+
+Optional:
+
+- `feedback: string`
+- `rubric_notes: string`
+- `comments: string`
+- `percentage: number`
+
+Returns:
+
+- updated submission row (`submissionId`, `gradingStatus: "graded"`, `score`, `pointsEarned`, `pointsPossible`, `feedback`, `rubricNotes`, etc.)
+- `gradeSummary` (updated student summary after grade write)
 
 ## Validation errors (4xx)
 
