@@ -219,6 +219,7 @@ def test_quiz_submission_auto_grades_correctly_and_grade_summary(app_client):
         f"/curriculum/assignments/{quiz.id}/submissions",
         json={
             "username": "student",
+            "competition_id": competition_id,
             "answers": answer_key,
         },
     )
@@ -412,7 +413,7 @@ def test_instructor_can_list_submissions_and_manually_grade(app_client):
 
     submit_resp = client.post(
         f"/curriculum/assignments/{assignment.id}/submissions",
-        json={"username": "student", "answers": {"a1": {"a": "test"}, "a2": {"a": "12.5%"}}},
+        json={"username": "student", "competition_id": competition_id, "answers": {"a1": {"a": "test"}, "a2": {"a": "12.5%"}}},
     )
     assert submit_resp.status_code == 200
     assert submit_resp.get_json()["autoGraded"] is False
@@ -655,14 +656,14 @@ def test_teacher_dashboard_roster_and_student_detail_endpoints(app_client):
 
     quiz_submit_resp = client.post(
         f"/curriculum/assignments/{quiz_id}/submissions",
-        json={"username": "student", "answers": answer_key},
+        json={"username": "student", "competition_id": competition_id, "answers": answer_key},
     )
     assert quiz_submit_resp.status_code == 200
     assert quiz_submit_resp.get_json()["status"] == "graded"
 
     written_submit_resp = client.post(
         f"/curriculum/assignments/{written_id}/submissions",
-        json={"username": "student", "answers": {"q1": "analysis", "q2": "reflection"}},
+        json={"username": "student", "competition_id": competition_id, "answers": {"q1": "analysis", "q2": "reflection"}},
     )
     assert written_submit_resp.status_code == 200
     assert written_submit_resp.get_json()["status"] == "pending_grade"
@@ -700,7 +701,7 @@ def test_teacher_manual_grade_updates_summary_and_trade_blotter_endpoint(app_cli
 
     written_submit_resp = client.post(
         f"/curriculum/assignments/{written_id}/submissions",
-        json={"username": "student", "answers": {"q1": "alpha", "q2": "beta"}},
+        json={"username": "student", "competition_id": competition_id, "answers": {"q1": "alpha", "q2": "beta"}},
     )
     assert written_submit_resp.status_code == 200
 
@@ -775,7 +776,7 @@ def test_student_cannot_access_teacher_dashboard_routes(app_client):
 
     list_resp = client.post(
         f"/curriculum/assignments/{written_id}/submissions",
-        json={"username": "student", "answers": {"q1": "x", "q2": "y"}},
+        json={"username": "student", "competition_id": competition_id, "answers": {"q1": "x", "q2": "y"}},
     )
     submission_id = client.get(
         f"/curriculum/assignments/{written_id}/submissions",
@@ -788,3 +789,100 @@ def test_student_cannot_access_teacher_dashboard_routes(app_client):
         json={"username": "student", "score": 10},
     )
     assert forbidden_grade_resp.status_code == 403
+
+
+def test_competition_creator_can_access_teacher_endpoints_with_member_account_id(app_client):
+    client, app_module = app_client
+    competition_id, _competition_code, _student_id, _quiz_id, _written_id = _setup_teacher_dashboard_case(
+        client, app_module, competition_name="Teacher Creator Access Cup"
+    )
+    with app_module.app.app_context():
+        teacher = app_module.User.query.filter_by(username="teacher").first()
+        teacher_member = app_module.CompetitionMember.query.filter_by(
+            competition_id=competition_id,
+            user_id=teacher.id,
+        ).first()
+        if not teacher_member:
+            teacher_member = app_module.CompetitionMember(
+                competition_id=competition_id,
+                user_id=teacher.id,
+                cash_balance=100000,
+            )
+            app_module.db.session.add(teacher_member)
+            app_module.db.session.commit()
+        teacher_member_account_id = teacher_member.id
+
+    roster_resp = client.get(
+        f"/curriculum/competition/{teacher_member_account_id}/teacher/roster",
+        query_string={"username": "teacher"},
+    )
+    assert roster_resp.status_code == 200
+    assert roster_resp.get_json()["competitionId"] == competition_id
+    assert roster_resp.get_json()["is_instructor_for_competition"] is True
+
+
+def test_quiz_submission_array_format_auto_grades_and_surfaces_in_teacher_views(app_client):
+    client, app_module = app_client
+    competition_id, _competition_code, student_id, quiz_id, _written_id = _setup_teacher_dashboard_case(
+        client, app_module, competition_name="Teacher Quiz Visibility Cup"
+    )
+    with app_module.app.app_context():
+        quiz = app_module.db.session.get(app_module.CurriculumAssignment, quiz_id)
+        answer_rows = [{"questionId": qid, "selectedChoice": expected} for qid, expected in quiz.answer_key_json["questions"].items()]
+
+    submit_resp = client.post(
+        f"/curriculum/assignments/{quiz_id}/submissions",
+        json={"username": "student", "competition_id": competition_id, "answers": answer_rows},
+    )
+    assert submit_resp.status_code == 200
+    payload = submit_resp.get_json()
+    assert payload["status"] == "graded"
+    assert payload["score"] == payload["pointsPossible"]
+
+    roster_resp = client.get(
+        f"/curriculum/competition/{competition_id}/teacher/roster",
+        query_string={"username": "teacher"},
+    )
+    row = next(r for r in roster_resp.get_json()["roster"] if r["userId"] == student_id)
+    assert row["completedQuizzes"] == 1
+    assert row["latestQuizSubmission"]["gradingStatus"] == "graded"
+
+    detail_resp = client.get(
+        f"/curriculum/competition/{competition_id}/teacher/students/{student_id}",
+        query_string={"username": "teacher"},
+    )
+    quiz_item = next(item for item in detail_resp.get_json()["items"] if item["assignmentType"] == "quiz")
+    assert quiz_item["pointsEarned"] > 0
+    assert quiz_item["gradingStatus"] == "graded"
+
+
+def test_multipart_written_submission_persists_and_visible_in_teacher_detail(app_client):
+    client, app_module = app_client
+    competition_id, _competition_code, student_id, _quiz_id, written_id = _setup_teacher_dashboard_case(
+        client, app_module, competition_name="Multipart Written Cup"
+    )
+    multipart_answers = [
+        {
+            "questionId": "q1",
+            "parts": [
+                {"partId": "thesis", "response": "Diversification lowers idiosyncratic risk."},
+                {"partId": "support", "response": "Correlation matters for portfolio volatility."},
+            ],
+        },
+        {"questionId": "q2", "response": "I would rebalance monthly based on drawdown limits."},
+    ]
+    submit_resp = client.post(
+        f"/curriculum/assignments/{written_id}/submissions",
+        json={"username": "student", "competition_id": competition_id, "answers": multipart_answers},
+    )
+    assert submit_resp.status_code == 200
+    assert submit_resp.get_json()["status"] == "pending_grade"
+
+    detail_resp = client.get(
+        f"/curriculum/competition/{competition_id}/teacher/students/{student_id}",
+        query_string={"username": "teacher"},
+    )
+    written_item = next(item for item in detail_resp.get_json()["items"] if item["assignmentType"] == "assignment")
+    assert written_item["gradingStatus"] == "pending_grade"
+    assert isinstance(written_item["submissionContent"], dict)
+    assert written_item["submissionContent"]["answers"][0]["parts"][0]["response"].startswith("Diversification")
