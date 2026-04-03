@@ -907,20 +907,21 @@ def _compute_grade_summary(competition_id, user_id):
         ).all()
     submission_by_assignment = {s.assignment_id: s for s in submission_rows}
     module_breakdown = []
-    scoped_module_breakdown = []
+    all_module_rows = []
     total_possible = 0.0
     total_scored = 0.0
+    total_items = 0
+    completed_items = 0
     additional_items = []
-    now = datetime.utcnow()
     for module in modules:
         module_assignments = [a for a in assignments if a.module_id == module.id]
         module_breakdown.append(_build_module_grade_breakdown(competition, module, user_id, module_assignments, submission_by_assignment))
         module_grade = _module_grade_row(module, module_assignments, submission_by_assignment)
-        if _is_module_in_grade_scope(module, now=now):
-            scoped_row = module_grade
-            scoped_module_breakdown.append(scoped_row)
-            total_scored += scoped_row["pointsEarned"]
-            total_possible += scoped_row["pointsPossible"]
+        all_module_rows.append(module_grade)
+        total_scored += module_grade["pointsEarned"]
+        total_possible += module_grade["pointsPossible"]
+        total_items += len(module_grade["items"])
+        completed_items += len([row for row in module_grade["items"] if row.get("gradingStatus") == "graded"])
 
         for assignment in module_assignments:
             if assignment.type in ("quiz", "assignment"):
@@ -940,12 +941,16 @@ def _compute_grade_summary(competition_id, user_id):
             })
     overall_pct = round((total_scored / total_possible * 100.0), 2) if total_possible else None
     letter = _grade_letter_from_percentage(overall_pct)
+    progress_pct = round((completed_items / total_items * 100.0), 2) if total_items else 0.0
     overall_summary = {
-        "scope": "released_modules_graded_items",
+        "scope": "all_modules_graded_items",
         "points_earned": round(total_scored, 2),
         "points_possible": round(total_possible, 2),
         "percentage": overall_pct,
         "letter": letter,
+        "completed_items": completed_items,
+        "total_items": total_items,
+        "progress_percentage": progress_pct,
     }
     return {
         "curriculumId": curriculum.id,
@@ -955,13 +960,16 @@ def _compute_grade_summary(competition_id, user_id):
         "totalPointsPossible": round(total_possible, 2),
         "percentage": overall_pct,
         "letterGrade": letter,
+        "completedItems": completed_items,
+        "totalItems": total_items,
+        "progressPercentage": progress_pct,
         "moduleGrades": module_breakdown,
-        "items": scoped_module_breakdown,
+        "items": all_module_rows,
         "additionalAssessments": additional_items,
         "grade_summary_overall": overall_summary,
         "gradeSummaryOverall": overall_summary,
-        "grade_summary_by_module": scoped_module_breakdown,
-        "gradeSummaryByModule": scoped_module_breakdown,
+        "grade_summary_by_module": all_module_rows,
+        "gradeSummaryByModule": all_module_rows,
     }
 
 
@@ -1098,13 +1106,11 @@ def _build_teacher_grade_rows(competition, curriculum, member_ids):
         total_curriculum_items = 0
         items = []
         module_rows = []
-        now = datetime.utcnow()
 
         for module in modules:
             module_assignments = assignment_by_module.get(module.id, [])
-            if _is_module_in_grade_scope(module, now=now):
-                scoped_submission_by_assignment = submissions_by_user.get(uid, {})
-                module_rows.append(_module_grade_row(module, module_assignments, scoped_submission_by_assignment))
+            scoped_submission_by_assignment = submissions_by_user.get(uid, {})
+            module_rows.append(_module_grade_row(module, module_assignments, scoped_submission_by_assignment))
             for assignment in assignment_by_module.get(module.id, []):
                 total_curriculum_items += 1
                 sub = submissions_by_user.get(uid, {}).get(assignment.id)
@@ -1141,23 +1147,30 @@ def _build_teacher_grade_rows(competition, curriculum, member_ids):
                 })
 
         percentage = round((total_points_earned / total_points_possible * 100.0), 2) if total_points_possible else None
+        progress_pct = round((completed_quizzes + completed_assignments) / total_curriculum_items * 100.0, 2) if total_curriculum_items else 0.0
         rows[uid] = {
             "curriculumPercentage": percentage,
+            "percentage": percentage,
             "letterGrade": _grade_letter_from_percentage(percentage),
             "totalPointsEarned": round(total_points_earned, 2),
             "totalPointsPossible": round(total_points_possible, 2),
             "completedQuizzes": completed_quizzes,
             "completedAssignments": completed_assignments,
             "totalCurriculumItems": total_curriculum_items,
+            "completedCurriculumItems": completed_quizzes + completed_assignments,
+            "progressPercentage": progress_pct,
             "hasTrades": trade_count_by_user.get(uid, 0) > 0,
             "tradeCount": trade_count_by_user.get(uid, 0),
             "items": items,
             "grade_summary_overall": {
-                "scope": "released_modules_graded_items",
+                "scope": "all_modules_graded_items",
                 "points_earned": round(total_points_earned, 2),
                 "points_possible": round(total_points_possible, 2),
                 "percentage": percentage,
                 "letter": _grade_letter_from_percentage(percentage),
+                "completed_items": completed_quizzes + completed_assignments,
+                "total_items": total_curriculum_items,
+                "progress_percentage": progress_pct,
             },
             "grade_summary_by_module": module_rows,
         }
@@ -2761,6 +2774,8 @@ def curriculum_grades(competition_id, user_id):
     if not requester:
         return jsonify({"message": "Authentication required"}), 401
     requesting_user = User.query.filter_by(username=requester).first()
+    if not requesting_user:
+        return jsonify({"message": "Invalid credentials"}), 401
     resolved_competition_id = _resolve_curriculum_competition_id(
         competition_id,
         requester_user_id=requesting_user.id,
@@ -2768,8 +2783,6 @@ def curriculum_grades(competition_id, user_id):
     competition = db.session.get(Competition, resolved_competition_id)
     if not competition:
         return jsonify({"message": "Competition not found"}), 404
-    if not requesting_user:
-        return jsonify({"message": "Invalid credentials"}), 401
     if requesting_user.id != user_id and not _is_competition_instructor(requesting_user, competition):
         return jsonify({"message": "Forbidden"}), 403
     target_user = db.session.get(User, user_id)
@@ -3454,6 +3467,7 @@ def curriculum_instructor_overview(competition_id):
 
 
 @app.route('/curriculum/competition/<int:competition_id>/teacher/roster', methods=['GET'])
+@app.route('/curriculum/competition/<int:competition_id>/instructor/roster', methods=['GET'])
 def curriculum_teacher_roster(competition_id):
     requester = request.args.get("username")
     if not requester:
@@ -3498,18 +3512,23 @@ def curriculum_teacher_roster(competition_id):
             "displayName": user.username if user else f"user-{uid}",
             "email": user.email if user else None,
             "curriculumPercentage": grade.get("curriculumPercentage"),
+            "percentage": grade.get("curriculumPercentage"),
             "letterGrade": grade.get("letterGrade", "N/A"),
             "totalPointsEarned": grade.get("totalPointsEarned", 0.0),
             "totalPointsPossible": grade.get("totalPointsPossible", 0.0),
             "completedQuizzes": grade.get("completedQuizzes", 0),
             "completedAssignments": grade.get("completedAssignments", 0),
+            "completedCurriculumItems": grade.get("completedCurriculumItems", 0),
+            "progressPercentage": grade.get("progressPercentage", 0.0),
             "totalCurriculumItems": grade.get("totalCurriculumItems", 0),
             "hasTrades": grade.get("hasTrades", False),
             "tradeCount": grade.get("tradeCount", 0),
             "latestQuizSubmission": latest_quiz,
             "latestWrittenSubmission": latest_written,
             "grade_summary_overall": grade.get("grade_summary_overall", {}),
+            "gradeSummaryOverall": grade.get("grade_summary_overall", {}),
             "grade_summary_by_module": grade.get("grade_summary_by_module", []),
+            "gradeSummaryByModule": grade.get("grade_summary_by_module", []),
         })
 
     return jsonify({
@@ -3522,6 +3541,7 @@ def curriculum_teacher_roster(competition_id):
 
 
 @app.route('/curriculum/competition/<int:competition_id>/teacher/students/<int:student_id>', methods=['GET'])
+@app.route('/curriculum/competition/<int:competition_id>/instructor/students/<int:student_id>', methods=['GET'])
 def curriculum_teacher_student_detail(competition_id, student_id):
     requester = request.args.get("username")
     if not requester:
@@ -3567,19 +3587,26 @@ def curriculum_teacher_student_detail(competition_id, student_id):
         },
         "gradeSummary": {
             "curriculumPercentage": grade.get("curriculumPercentage"),
+            "percentage": grade.get("curriculumPercentage"),
             "letterGrade": grade.get("letterGrade", "N/A"),
             "totalPointsEarned": grade.get("totalPointsEarned", 0.0),
             "totalPointsPossible": grade.get("totalPointsPossible", 0.0),
             "completedQuizzes": grade.get("completedQuizzes", 0),
             "completedAssignments": grade.get("completedAssignments", 0),
+            "completedCurriculumItems": grade.get("completedCurriculumItems", 0),
+            "progressPercentage": grade.get("progressPercentage", 0.0),
             "totalCurriculumItems": grade.get("totalCurriculumItems", 0),
             "hasTrades": grade.get("hasTrades", False),
             "tradeCount": grade.get("tradeCount", 0),
             "grade_summary_overall": grade.get("grade_summary_overall", {}),
+            "gradeSummaryOverall": grade.get("grade_summary_overall", {}),
             "grade_summary_by_module": grade.get("grade_summary_by_module", []),
+            "gradeSummaryByModule": grade.get("grade_summary_by_module", []),
         },
         "grade_summary_overall": grade.get("grade_summary_overall", {}),
+        "gradeSummaryOverall": grade.get("grade_summary_overall", {}),
         "grade_summary_by_module": grade.get("grade_summary_by_module", []),
+        "gradeSummaryByModule": grade.get("grade_summary_by_module", []),
         "items": items,
     }), 200
 
