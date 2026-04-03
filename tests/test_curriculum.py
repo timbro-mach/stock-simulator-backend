@@ -321,6 +321,40 @@ def test_curriculum_grades_accepts_member_account_id_and_checks_membership(app_c
     assert nonmember_resp.status_code == 404
 
 
+
+
+def test_curriculum_grades_accepts_member_account_id_as_user_path_param(app_client):
+    client, app_module = app_client
+    create_user(app_module, username="teacher", email="teacher@example.com")
+    create_user(app_module, username="student", email="student@example.com")
+
+    resp = _create_competition(client, {
+        "username": "teacher",
+        "competition_name": "Member User Param Cup",
+        "curriculumEnabled": True,
+        "curriculumWeeks": 4,
+        "curriculumStartDate": "2026-01-01",
+        "curriculumEndDate": "2026-02-15",
+    })
+    assert resp.status_code == 200
+
+    with app_module.app.app_context():
+        comp = app_module.Competition.query.filter_by(name="Member User Param Cup").first()
+        student = app_module.User.query.filter_by(username="student").first()
+        member = app_module.CompetitionMember(competition_id=comp.id, user_id=student.id, cash_balance=100000)
+        app_module.db.session.add(member)
+        app_module.db.session.commit()
+        competition_id = comp.id
+        student_member_id = member.id
+
+    resp = client.get(
+        f"/curriculum/competition/{competition_id}/grades/{student_member_id}",
+        query_string={"username": "student"},
+    )
+    assert resp.status_code == 200
+    payload = resp.get_json()
+    assert payload["competitionId"] == competition_id
+
 def test_curriculum_grades_prefers_requester_membership_when_member_id_collides_with_competition_id(app_client):
     client, app_module = app_client
     create_user(app_module, username="teacher", email="teacher@example.com")
@@ -834,7 +868,7 @@ def test_teacher_question_grade_endpoint_updates_submission_totals(app_client):
     with app_module.app.app_context():
         sub = app_module.CurriculumSubmission.query.filter_by(
             assignment_id=written_id,
-            user_id=student_id,
+            user_id=student.id,
         ).first()
         submission_id = sub.id
 
@@ -1523,7 +1557,7 @@ def test_trade_updates_grade_summary_progress_and_respects_due_day(app_client, m
         curriculum = app_module.Curriculum.query.filter_by(competition_id=competition_id).first()
         module = app_module.CurriculumModule.query.filter_by(curriculum_id=curriculum.id, week_number=1).first()
         trade_row = app_module.TradeBlotterEntry.query.filter_by(
-            user_id=student_id,
+            user_id=student.id,
             account_context=f"competition:{competition_code}",
         ).order_by(app_module.TradeBlotterEntry.created_at.desc()).first()
         trade_row.created_at = module.due_date + app_module.timedelta(hours=12)

@@ -2805,19 +2805,39 @@ def curriculum_grades(competition_id, user_id):
     competition = db.session.get(Competition, resolved_competition_id)
     if not competition:
         return jsonify({"message": "Competition not found"}), 404
-    if requesting_user.id != user_id and not _is_competition_instructor(requesting_user, competition):
-        return jsonify({"message": "Forbidden"}), 403
+
+    # Frontends may pass either a User.id or a CompetitionMember.id in the path.
+    # Prefer the requester's own membership row when ids collide.
+    target_member = db.session.get(CompetitionMember, user_id)
     target_user = db.session.get(User, user_id)
-    if not target_user:
+    if (
+        target_member
+        and target_member.competition_id == resolved_competition_id
+        and requesting_user.id == target_member.user_id
+    ):
+        target_user_id = target_member.user_id
+        target_user = db.session.get(User, target_user_id)
+    elif target_user is not None:
+        target_user_id = target_user.id
+    elif target_member and target_member.competition_id == resolved_competition_id:
+        target_user_id = target_member.user_id
+        target_user = db.session.get(User, target_user_id)
+    else:
+        target_user_id = None
+
+    if target_user_id is None or not target_user:
         return jsonify({"message": "User not found"}), 404
+    if requesting_user.id != target_user_id and not _is_competition_instructor(requesting_user, competition):
+        return jsonify({"message": "Forbidden"}), 403
+
     competition_membership = CompetitionMember.query.filter_by(
         competition_id=resolved_competition_id,
-        user_id=user_id,
+        user_id=target_user_id,
     ).first()
     if not competition_membership:
         return jsonify({"message": "No grade records found for this user in the specified competition"}), 404
 
-    summary = _compute_grade_summary(resolved_competition_id, user_id)
+    summary = _compute_grade_summary(resolved_competition_id, target_user_id)
     if summary is None:
         return jsonify({"message": "Curriculum not enabled for this competition"}), 404
     return jsonify(summary)
