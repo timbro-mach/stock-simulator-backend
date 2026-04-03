@@ -543,6 +543,75 @@ def test_instructor_can_list_submissions_and_manually_grade(app_client):
     assert "writtenAssignmentSubmissions" in overview_payload
 
 
+def test_curriculum_overview_and_submission_aliases_resolve_member_account_ids(app_client):
+    client, app_module = app_client
+    create_user(app_module, username="teacher", email="teacher@example.com")
+    create_user(app_module, username="student", email="student@example.com")
+
+    resp = _create_competition(client, {
+        "username": "teacher",
+        "competition_name": "Alias Resolution Cup",
+        "curriculumEnabled": True,
+        "curriculumWeeks": 2,
+        "curriculumStartDate": "2026-04-01",
+        "curriculumEndDate": "2026-05-01",
+    })
+    assert resp.status_code == 200
+
+    with app_module.app.app_context():
+        comp = app_module.Competition.query.filter_by(name="Alias Resolution Cup").first()
+        teacher = app_module.User.query.filter_by(username="teacher").first()
+        teacher_member = app_module.CompetitionMember.query.filter_by(
+            competition_id=comp.id,
+            user_id=teacher.id,
+        ).first()
+        if teacher_member is None:
+            teacher_member = app_module.CompetitionMember(
+                competition_id=comp.id,
+                user_id=teacher.id,
+                cash_balance=100000,
+            )
+            app_module.db.session.add(teacher_member)
+            app_module.db.session.commit()
+        competition_id = comp.id
+        teacher_member_account_id = teacher_member.id
+
+    for overview_path in (
+        "instructor-overview",
+        "teacher-overview",
+        "instructor/overview",
+        "teacher/overview",
+    ):
+        overview_resp = client.get(
+            f"/curriculum/competition/{teacher_member_account_id}/{overview_path}",
+            query_string={"username": "teacher"},
+        )
+        assert overview_resp.status_code == 200
+        assert overview_resp.get_json()["competitionId"] == competition_id
+
+    for submissions_path in (
+        "written-submissions",
+        "instructor/submissions",
+        "teacher/submissions",
+        "submissions",
+    ):
+        submissions_resp = client.get(
+            f"/curriculum/competition/{teacher_member_account_id}/{submissions_path}",
+            query_string={"username": "teacher"},
+        )
+        assert submissions_resp.status_code == 200
+        submissions_payload = submissions_resp.get_json()
+        assert submissions_payload["competitionId"] == competition_id
+        assert "submissions" in submissions_payload
+
+    query_submissions_resp = client.get(
+        "/curriculum/submissions",
+        query_string={"username": "teacher", "competition_id": teacher_member_account_id},
+    )
+    assert query_submissions_resp.status_code == 200
+    assert query_submissions_resp.get_json()["competitionId"] == competition_id
+
+
 def test_module_grade_breakdown_includes_trade_participation_and_competition_gradebook(app_client, monkeypatch):
     client, app_module = app_client
     create_user(app_module, username="teacher", email="teacher@example.com")
