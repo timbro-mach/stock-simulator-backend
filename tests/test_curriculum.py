@@ -899,6 +899,69 @@ def test_student_and_teacher_grade_views_match_after_manual_question_grading(app
     assert student_payload["percentage"] == teacher_payload["gradeSummary"]["curriculumPercentage"]
 
 
+def test_instructor_alias_endpoints_return_consistent_non_zero_grade_summaries_after_grading(app_client):
+    client, app_module = app_client
+    competition_id, _competition_code, student_id, _quiz_id, written_id = _setup_teacher_dashboard_case(
+        client, app_module, competition_name="Instructor Alias Grade Sync Cup"
+    )
+    submit_resp = client.post(
+        f"/curriculum/assignments/{written_id}/submissions",
+        json={"username": "student", "competition_id": competition_id, "answers": {"a1": "x", "a2": "y"}},
+    )
+    assert submit_resp.status_code == 200
+
+    with app_module.app.app_context():
+        sub = app_module.CurriculumSubmission.query.filter_by(assignment_id=written_id, user_id=student_id).first()
+        submission_id = sub.id
+
+    grade_resp = client.post(
+        f"/curriculum/submissions/{submission_id}/grade",
+        json={"username": "teacher", "score": 17, "feedback": "Good effort"},
+    )
+    assert grade_resp.status_code == 200
+    assert grade_resp.get_json()["status"] == "graded"
+
+    student_grades_resp = client.get(
+        f"/curriculum/competition/{competition_id}/grades/{student_id}",
+        query_string={"username": "student"},
+    )
+    instructor_student_resp = client.get(
+        f"/curriculum/competition/{competition_id}/instructor/students/{student_id}",
+        query_string={"username": "teacher"},
+    )
+    instructor_roster_resp = client.get(
+        f"/curriculum/competition/{competition_id}/instructor/roster",
+        query_string={"username": "teacher"},
+    )
+
+    assert student_grades_resp.status_code == 200
+    assert instructor_student_resp.status_code == 200
+    assert instructor_roster_resp.status_code == 200
+
+    student_payload = student_grades_resp.get_json()
+    detail_payload = instructor_student_resp.get_json()
+    roster_payload = instructor_roster_resp.get_json()
+    roster_row = next(row for row in roster_payload["roster"] if row["userId"] == student_id)
+
+    assert student_payload["totalPointsEarned"] == 17.0
+    assert student_payload["totalPointsPossible"] == 20.0
+    assert student_payload["percentage"] == 85.0
+    assert student_payload["letterGrade"] == "B"
+    assert student_payload["gradeSummaryByModule"]
+
+    assert detail_payload["gradeSummary"]["totalPointsEarned"] == 17.0
+    assert detail_payload["gradeSummary"]["totalPointsPossible"] == 20.0
+    assert detail_payload["gradeSummary"]["percentage"] == 85.0
+    assert detail_payload["gradeSummary"]["letterGrade"] == "B"
+    assert detail_payload["gradeSummaryByModule"]
+
+    assert roster_row["totalPointsEarned"] == 17.0
+    assert roster_row["totalPointsPossible"] == 20.0
+    assert roster_row["percentage"] == 85.0
+    assert roster_row["letterGrade"] == "B"
+    assert roster_row["gradeSummaryByModule"]
+
+
 def test_partial_grading_marks_assignment_as_graded(app_client):
     client, app_module = app_client
     competition_id, _competition_code, student_id, _quiz_id, written_id = _setup_teacher_dashboard_case(
