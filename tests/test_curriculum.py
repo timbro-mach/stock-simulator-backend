@@ -362,7 +362,7 @@ def test_curriculum_grades_prefers_requester_membership_when_member_id_collides_
 
         student_member = app_module.CompetitionMember(
             competition_id=target_comp.id,
-            user_id=student.id,
+            user_id=student_id,
             cash_balance=100000,
         )
         app_module.db.session.add(student_member)
@@ -530,6 +530,7 @@ def test_module_grade_breakdown_includes_trade_participation_and_competition_gra
         competition_id = comp.id
         competition_code = comp.code
         student_id = student.id
+        student_id = student.id
 
     monkeypatch.setattr(app_module, "get_current_price", lambda symbol: 100.0)
     trade_resp = client.post(
@@ -638,7 +639,7 @@ def test_curriculum_endpoints_resolve_member_account_id_when_ids_collide(app_cli
         student = app_module.User.query.filter_by(username="student").first()
         member = app_module.CompetitionMember(
             competition_id=curriculum_competition_id,
-            user_id=student.id,
+            user_id=student_id,
             cash_balance=100000,
         )
         app_module.db.session.add(member)
@@ -1299,7 +1300,7 @@ def test_teacher_roster_prefers_competition_id_when_member_id_collides(app_clien
 
         baseline_member_1 = app_module.CompetitionMember(
             competition_id=baseline_comp.id,
-            user_id=student.id,
+            user_id=student_id,
             cash_balance=100000,
         )
         baseline_member_2 = app_module.CompetitionMember(
@@ -1309,7 +1310,7 @@ def test_teacher_roster_prefers_competition_id_when_member_id_collides(app_clien
         )
         target_member = app_module.CompetitionMember(
             competition_id=target_comp.id,
-            user_id=student.id,
+            user_id=student_id,
             cash_balance=100000,
         )
         app_module.db.session.add_all([baseline_member_1, baseline_member_2, target_member])
@@ -1446,3 +1447,93 @@ def test_legacy_quiz_without_answer_key_counts_toward_grade_summary(app_client):
     assert student_summary_resp.status_code == 200
     summary_payload = student_summary_resp.get_json()
     assert summary_payload["totalPointsPossible"] > 0
+
+
+def test_quiz_submission_returns_grade_summary_for_student_refresh(app_client):
+    client, app_module = app_client
+    create_user(app_module, username="teacher", email="teacher@example.com")
+    create_user(app_module, username="student", email="student@example.com")
+
+    resp = _create_competition(client, {
+        "username": "teacher",
+        "competition_name": "Quiz Submit Grade Summary Cup",
+        "curriculumEnabled": True,
+        "curriculumWeeks": 3,
+        "curriculumStartDate": "2026-01-01",
+        "curriculumEndDate": "2026-02-01",
+    })
+    assert resp.status_code == 200
+
+    with app_module.app.app_context():
+        comp = app_module.Competition.query.filter_by(name="Quiz Submit Grade Summary Cup").first()
+        student = app_module.User.query.filter_by(username="student").first()
+        app_module.db.session.add(app_module.CompetitionMember(competition_id=comp.id, user_id=student.id, cash_balance=100000))
+        app_module.db.session.commit()
+        curriculum = app_module.Curriculum.query.filter_by(competition_id=comp.id).first()
+        first_module = app_module.CurriculumModule.query.filter_by(curriculum_id=curriculum.id, week_number=1).first()
+        quiz = app_module.CurriculumAssignment.query.filter_by(module_id=first_module.id, type="quiz").first()
+        answer_key = quiz.answer_key_json["questions"]
+
+    submit_resp = client.post(
+        f"/curriculum/assignments/{quiz.id}/submissions",
+        json={"username": "student", "competition_id": comp.id, "answers": answer_key},
+    )
+    assert submit_resp.status_code == 200
+    payload = submit_resp.get_json()
+    assert payload["status"] == "graded"
+    assert payload["gradeSummary"]
+    assert payload["gradeSummary"]["completedItems"] >= 1
+    assert payload["gradeSummary"]["progressPercentage"] > 0
+
+
+def test_trade_updates_grade_summary_progress_and_respects_due_day(app_client, monkeypatch):
+    client, app_module = app_client
+    create_user(app_module, username="teacher", email="teacher@example.com")
+    create_user(app_module, username="student", email="student@example.com")
+
+    resp = _create_competition(client, {
+        "username": "teacher",
+        "competition_name": "Trade Due Day Progress Cup",
+        "curriculumEnabled": True,
+        "curriculumWeeks": 2,
+        "curriculumStartDate": "2026-03-15",
+        "curriculumEndDate": "2026-05-15",
+    })
+    assert resp.status_code == 200
+
+    with app_module.app.app_context():
+        comp = app_module.Competition.query.filter_by(name="Trade Due Day Progress Cup").first()
+        student = app_module.User.query.filter_by(username="student").first()
+        app_module.db.session.add(app_module.CompetitionMember(competition_id=comp.id, user_id=student.id, cash_balance=100000))
+        app_module.db.session.commit()
+        competition_id = comp.id
+        competition_code = comp.code
+        student_id = student.id
+
+    monkeypatch.setattr(app_module, "get_current_price", lambda symbol: 100.0)
+    trade_resp = client.post(
+        "/competition/buy",
+        json={"username": "student", "competition_id": competition_id, "competition_code": competition_code, "symbol": "AAPL", "quantity": 1},
+    )
+    assert trade_resp.status_code == 200
+    trade_payload = trade_resp.get_json()
+    assert trade_payload["gradeSummary"]
+
+    with app_module.app.app_context():
+        curriculum = app_module.Curriculum.query.filter_by(competition_id=competition_id).first()
+        module = app_module.CurriculumModule.query.filter_by(curriculum_id=curriculum.id, week_number=1).first()
+        trade_row = app_module.TradeBlotterEntry.query.filter_by(
+            user_id=student_id,
+            account_context=f"competition:{competition_code}",
+        ).order_by(app_module.TradeBlotterEntry.created_at.desc()).first()
+        trade_row.created_at = module.due_date + app_module.timedelta(hours=12)
+        app_module.db.session.commit()
+
+    grades_resp = client.get(
+        f"/curriculum/competition/{competition_id}/grades/{student_id}",
+        query_string={"username": "student"},
+    )
+    assert grades_resp.status_code == 200
+    grades_payload = grades_resp.get_json()
+    assert grades_payload["moduleGrades"][0]["tradeParticipation"]["tradeCompleted"] is True
+    assert grades_payload["progressPercentage"] > 0
