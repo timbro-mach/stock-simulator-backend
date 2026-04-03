@@ -1585,6 +1585,48 @@ def test_legacy_quiz_without_answer_key_counts_toward_grade_summary(app_client):
     assert summary_payload["totalPointsPossible"] > 0
 
 
+
+def test_quiz_with_non_dict_answer_key_falls_back_to_keyless_grading(app_client):
+    client, app_module = app_client
+    competition_id, _competition_code, student_id, quiz_id, _written_id = _setup_teacher_dashboard_case(
+        client, app_module, competition_name="Legacy Quiz List Key Cup"
+    )
+
+    with app_module.app.app_context():
+        quiz = app_module.db.session.get(app_module.CurriculumAssignment, quiz_id)
+        quiz.answer_key_json = {"questions": ["a", "b"]}
+        app_module.db.session.commit()
+
+    quiz_submit = client.post(
+        f"/curriculum/assignments/{quiz_id}/submissions",
+        json={
+            "username": "student",
+            "competition_id": competition_id,
+            "answers": [{"questionId": "q1", "selectedChoice": "Incorrect"}],
+        },
+    )
+    assert quiz_submit.status_code == 200
+    submit_payload = quiz_submit.get_json()
+    assert submit_payload["status"] == "submitted"
+
+    roster_resp = client.get(
+        f"/curriculum/competition/{competition_id}/teacher/roster",
+        query_string={"username": "teacher"},
+    )
+    assert roster_resp.status_code == 200
+    row = next(r for r in roster_resp.get_json()["roster"] if r["userId"] == student_id)
+    assert row["completedQuizzes"] == 1
+    assert row["totalPointsPossible"] > 0
+
+    student_summary_resp = client.get(
+        f"/curriculum/competition/{competition_id}/grades/{student_id}",
+        query_string={"username": "student"},
+    )
+    assert student_summary_resp.status_code == 200
+    summary_payload = student_summary_resp.get_json()
+    assert summary_payload["totalPointsPossible"] > 0
+
+
 def test_quiz_submission_returns_grade_summary_for_student_refresh(app_client):
     client, app_module = app_client
     create_user(app_module, username="teacher", email="teacher@example.com")
