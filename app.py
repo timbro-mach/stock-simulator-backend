@@ -747,11 +747,14 @@ def _is_competition_instructor(user, competition):
 def _get_trade_participation_for_module(competition, module, user_id):
     if not competition or not module:
         return False, 0
+    # Treat due_date as inclusive for the full calendar day.
+    window_start = module.unlock_date
+    window_end_exclusive = module.due_date + timedelta(days=1)
     trade_exists = db.session.query(TradeBlotterEntry.id).filter(
         TradeBlotterEntry.user_id == user_id,
         TradeBlotterEntry.account_context == f"competition:{competition.code}",
-        TradeBlotterEntry.created_at >= module.unlock_date,
-        TradeBlotterEntry.created_at <= module.due_date,
+        TradeBlotterEntry.created_at >= window_start,
+        TradeBlotterEntry.created_at < window_end_exclusive,
     ).first() is not None
     return trade_exists, (10 if trade_exists else 0)
 
@@ -922,6 +925,12 @@ def _compute_grade_summary(competition_id, user_id):
         total_possible += module_grade["pointsPossible"]
         total_items += len(module_grade["items"])
         completed_items += len([row for row in module_grade["items"] if row.get("gradingStatus") == "graded"])
+
+        if _is_module_in_grade_scope(module):
+            total_items += 1
+            trade_completed, _trade_points = _get_trade_participation_for_module(competition, module, user_id)
+            if trade_completed:
+                completed_items += 1
 
         for assignment in module_assignments:
             if assignment.type in ("quiz", "assignment"):
@@ -1111,6 +1120,10 @@ def _build_teacher_grade_rows(competition, curriculum, member_ids):
             module_assignments = assignment_by_module.get(module.id, [])
             scoped_submission_by_assignment = submissions_by_user.get(uid, {})
             module_rows.append(_module_grade_row(module, module_assignments, scoped_submission_by_assignment))
+
+            if _is_module_in_grade_scope(module):
+                total_curriculum_items += 1
+
             for assignment in assignment_by_module.get(module.id, []):
                 total_curriculum_items += 1
                 sub = submissions_by_user.get(uid, {}).get(assignment.id)
@@ -1146,8 +1159,17 @@ def _build_teacher_grade_rows(competition, curriculum, member_ids):
                     "gradedAt": sub.graded_at.isoformat() if sub and sub.graded_at else None,
                 })
 
+        trade_completed_items = 0
+        for module in modules:
+            if not _is_module_in_grade_scope(module):
+                continue
+            trade_completed, _trade_points = _get_trade_participation_for_module(competition, module, uid)
+            if trade_completed:
+                trade_completed_items += 1
+
         percentage = round((total_points_earned / total_points_possible * 100.0), 2) if total_points_possible else None
-        progress_pct = round((completed_quizzes + completed_assignments) / total_curriculum_items * 100.0, 2) if total_curriculum_items else 0.0
+        progress_numerator = completed_quizzes + completed_assignments + trade_completed_items
+        progress_pct = round((progress_numerator / total_curriculum_items) * 100.0, 2) if total_curriculum_items else 0.0
         rows[uid] = {
             "curriculumPercentage": percentage,
             "percentage": percentage,
@@ -1157,7 +1179,7 @@ def _build_teacher_grade_rows(competition, curriculum, member_ids):
             "completedQuizzes": completed_quizzes,
             "completedAssignments": completed_assignments,
             "totalCurriculumItems": total_curriculum_items,
-            "completedCurriculumItems": completed_quizzes + completed_assignments,
+            "completedCurriculumItems": progress_numerator,
             "progressPercentage": progress_pct,
             "hasTrades": trade_count_by_user.get(uid, 0) > 0,
             "tradeCount": trade_count_by_user.get(uid, 0),
@@ -1168,7 +1190,7 @@ def _build_teacher_grade_rows(competition, curriculum, member_ids):
                 "points_possible": round(total_points_possible, 2),
                 "percentage": percentage,
                 "letter": _grade_letter_from_percentage(percentage),
-                "completed_items": completed_quizzes + completed_assignments,
+                "completed_items": progress_numerator,
                 "total_items": total_curriculum_items,
                 "progress_percentage": progress_pct,
             },
@@ -2952,6 +2974,7 @@ def curriculum_submit_assignment(assignment_id):
         )
         db.session.add(submission)
     submission.answers_json = normalized_answers
+    submission.competition_id = curriculum.competition_id
     submission.score = round(score, 2)
     submission.percentage = round(percentage, 2)
     submission.submitted_at = datetime.utcnow()
@@ -2966,6 +2989,7 @@ def curriculum_submit_assignment(assignment_id):
         submission.assignment_total_score = None
     submission.feedback_json = feedback
     db.session.commit()
+    updated_summary = _compute_grade_summary(curriculum.competition_id, user.id)
 
     return jsonify({
         "assignmentId": assignment_id,
@@ -2986,6 +3010,7 @@ def curriculum_submit_assignment(assignment_id):
         "assignmentTotalScore": submission.assignment_total_score,
         "submissionId": submission.id,
         "isManuallyGradable": assignment.type == "assignment",
+        "gradeSummary": updated_summary,
     })
 
 
@@ -3760,7 +3785,12 @@ def competition_buy():
         account_context=f'competition:{comp.code}',
     )
     db.session.commit()
-    return jsonify({'message': 'Competition buy successful', 'competition_cash': member.cash_balance})
+    grade_summary = _compute_grade_summary(comp.id, user.id)
+    return jsonify({
+        'message': 'Competition buy successful',
+        'competition_cash': member.cash_balance,
+        'gradeSummary': grade_summary,
+    })
 
 
 
@@ -3835,8 +3865,13 @@ def competition_sell():
         account_context=f'competition:{comp.code}',
     )
     db.session.commit()
+    grade_summary = _compute_grade_summary(comp.id, user.id)
 
-    return jsonify({'message': 'Competition sell successful', 'competition_cash': member.cash_balance})
+    return jsonify({
+        'message': 'Competition sell successful',
+        'competition_cash': member.cash_balance,
+        'gradeSummary': grade_summary,
+    })
 
 
 # --------------------
