@@ -977,8 +977,11 @@ def _compute_grade_summary(competition_id, user_id):
     }
     return {
         "curriculumId": curriculum.id,
+        "curriculum_id": curriculum.id,
         "competitionId": competition_id,
+        "competition_id": competition_id,
         "userId": user_id,
+        "user_id": user_id,
         "totalPointsEarned": round(total_scored, 2),
         "totalPointsPossible": round(total_possible, 2),
         "percentage": overall_pct,
@@ -3033,6 +3036,7 @@ def curriculum_submit_assignment(assignment_id):
         "competitionId": curriculum.competition_id,
         "competition_id": curriculum.competition_id,
         "userId": user.id,
+        "user_id": user.id,
         "answers": submission.answers_json,
         "score": submission.score,
         "pointsEarned": submission.score,
