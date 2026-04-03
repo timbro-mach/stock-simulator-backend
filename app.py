@@ -169,6 +169,18 @@ class CurriculumSubmission(db.Model):
     # Duplicate submission rule: keep one active submission per user per assignment and overwrite on re-submit.
     __table_args__ = (db.UniqueConstraint('assignment_id', 'user_id', name='_curriculum_assignment_user_uc'),)
 
+class SubmissionQuestionGrade(db.Model):
+    __tablename__ = 'submission_question_grades'
+    id = db.Column(db.Integer, primary_key=True)
+    submission_id = db.Column(db.Integer, db.ForeignKey('curriculum_submission.id'), nullable=False, index=True)
+    question_id = db.Column(db.String(128), nullable=False)
+    points_awarded = db.Column(db.Float, nullable=False, default=0.0)
+    points_possible = db.Column(db.Float, nullable=False, default=0.0)
+    feedback = db.Column(db.Text, nullable=True)
+    graded_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False, index=True)
+    graded_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    __table_args__ = (db.UniqueConstraint('submission_id', 'question_id', name='_submission_question_uc'),)
+
 class CompetitionMember(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     competition_id = db.Column(db.Integer, db.ForeignKey('competition.id'), nullable=False)
@@ -331,6 +343,33 @@ def ensure_schema_compatibility():
                 if col_name in existing_cols:
                     continue
                 db.session.execute(text(f'ALTER TABLE curriculum_submission ADD COLUMN {col_name} {col_type}'))
+        if 'submission_question_grades' not in table_names:
+            db.session.execute(text(
+                'CREATE TABLE submission_question_grades ('
+                'id INTEGER PRIMARY KEY, '
+                'submission_id INTEGER NOT NULL, '
+                'question_id VARCHAR(128) NOT NULL, '
+                'points_awarded DOUBLE PRECISION NOT NULL DEFAULT 0.0, '
+                'points_possible DOUBLE PRECISION NOT NULL DEFAULT 0.0, '
+                'feedback TEXT, '
+                'graded_by INTEGER NOT NULL, '
+                'graded_at TIMESTAMP NOT NULL, '
+                'FOREIGN KEY(submission_id) REFERENCES curriculum_submission (id), '
+                'FOREIGN KEY(graded_by) REFERENCES user (id), '
+                'UNIQUE(submission_id, question_id)'
+                ')'
+            ))
+        else:
+            existing_cols = {c['name'] for c in insp.get_columns('submission_question_grades')}
+            sqg_needed = {
+                'feedback': 'TEXT',
+                'graded_by': 'INTEGER',
+                'graded_at': 'TIMESTAMP',
+            }
+            for col_name, col_type in sqg_needed.items():
+                if col_name in existing_cols:
+                    continue
+                db.session.execute(text(f'ALTER TABLE submission_question_grades ADD COLUMN {col_name} {col_type}'))
         db.session.commit()
     except Exception:
         db.session.rollback()
@@ -722,20 +761,23 @@ def _build_module_grade_breakdown(competition, module, user_id, assignments, sub
     written_assignment = next((a for a in assignments if a.type == "assignment"), None)
 
     quiz_submission = submission_by_assignment.get(quiz_assignment.id) if quiz_assignment else None
-    quiz_points = round(quiz_submission.score, 2) if quiz_submission else 0.0
-    quiz_percentage = round(quiz_submission.percentage, 2) if quiz_submission else 0.0
+    quiz_eval = _evaluate_assignment_for_gradebook(quiz_assignment, quiz_submission) if quiz_assignment else None
+    quiz_points = round(float(quiz_eval["pointsEarned"]), 2) if quiz_eval else 0.0
+    quiz_possible = round(float(quiz_eval["pointsPossible"]), 2) if quiz_eval else 0.0
+    quiz_percentage = quiz_eval["percentage"] if quiz_eval else None
 
     assignment_submission = submission_by_assignment.get(written_assignment.id) if written_assignment else None
+    assignment_eval = _evaluate_assignment_for_gradebook(written_assignment, assignment_submission) if written_assignment else None
+    question_rows = _submission_question_grade_rows(assignment_submission.id) if assignment_submission else []
     question_1_score = assignment_submission.question_1_score if assignment_submission and assignment_submission.question_1_score is not None else None
     question_2_score = assignment_submission.question_2_score if assignment_submission and assignment_submission.question_2_score is not None else None
-    assignment_total = (
-        round(assignment_submission.assignment_total_score, 2)
-        if assignment_submission and assignment_submission.assignment_total_score is not None
-        else (round(assignment_submission.score, 2) if assignment_submission else 0.0)
-    )
+    assignment_total = round(float(assignment_eval["pointsEarned"]), 2) if assignment_eval else 0.0
+    assignment_possible = round(float(assignment_eval["pointsPossible"]), 2) if assignment_eval else 0.0
 
     trade_completed, trade_points = _get_trade_participation_for_module(competition, module, user_id)
     module_total = round(quiz_points + assignment_total + trade_points, 2)
+    module_possible = round(quiz_possible + assignment_possible + 10.0, 2)
+    module_percentage = round((module_total / module_possible * 100.0), 2) if module_possible else None
     return {
         "moduleId": module.id,
         "moduleWeek": module.week_number,
@@ -743,8 +785,9 @@ def _build_module_grade_breakdown(competition, module, user_id, assignments, sub
         "quiz": {
             "assignmentId": quiz_assignment.id if quiz_assignment else None,
             "score": quiz_points,
-            "pointsPossible": 20,
+            "pointsPossible": quiz_possible,
             "percentage": quiz_percentage,
+            "gradingStatus": quiz_eval["status"] if quiz_eval else "not_submitted",
             "submittedAt": quiz_submission.submitted_at.isoformat() if quiz_submission else None,
         },
         "writtenAssignment": {
@@ -752,9 +795,19 @@ def _build_module_grade_breakdown(competition, module, user_id, assignments, sub
             "question1Score": question_1_score,
             "question2Score": question_2_score,
             "totalScore": assignment_total,
-            "pointsPossible": 20,
+            "pointsPossible": assignment_possible,
+            "percentage": assignment_eval["percentage"] if assignment_eval else None,
+            "gradingStatus": assignment_eval["status"] if assignment_eval else "not_submitted",
             "submittedAt": assignment_submission.submitted_at.isoformat() if assignment_submission else None,
             "feedback": (assignment_submission.feedback_json or {}) if assignment_submission else {},
+            "questionGrades": [
+                {
+                    "questionId": q.question_id,
+                    "pointsAwarded": q.points_awarded,
+                    "pointsPossible": q.points_possible,
+                    "feedback": q.feedback,
+                } for q in question_rows
+            ],
         },
         "tradeParticipation": {
             "tradeCompleted": trade_completed,
@@ -764,7 +817,8 @@ def _build_module_grade_breakdown(competition, module, user_id, assignments, sub
             "windowEnd": module.due_date.isoformat(),
         },
         "moduleTotalPoints": module_total,
-        "modulePointsPossible": 50,
+        "modulePointsPossible": module_possible,
+        "modulePercentage": module_percentage,
     }
 
 
@@ -802,14 +856,14 @@ def _module_grade_row(module, assignments, submission_by_assignment):
             "title": assignment.title,
             "pointsEarned": round(earned, 2),
             "pointsPossible": round(possible, 2),
-            "percentage": round(float(evaluated.get("percentage", 0.0) or 0.0), 2),
+            "percentage": round(float(evaluated.get("percentage")), 2) if evaluated.get("percentage") is not None else None,
             "gradingStatus": status,
             "isManuallyGradable": bool(evaluated.get("isManuallyGradable")),
             "submittedAt": submission.submitted_at.isoformat() if submission else None,
             "submissionId": submission.id if submission else None,
         })
 
-    module_percentage = round((points_earned / points_possible * 100.0), 2) if points_possible else 0.0
+    module_percentage = round((points_earned / points_possible * 100.0), 2) if points_possible else None
     if graded_item_count > 0:
         module_status = "graded"
     elif has_pending_manual_grade:
@@ -827,8 +881,8 @@ def _module_grade_row(module, assignments, submission_by_assignment):
         "points_possible": round(points_possible, 2),
         "pointsPossible": round(points_possible, 2),
         "percentage": module_percentage,
-        "letter": _grade_letter_from_percentage(module_percentage) if points_possible else "N/A",
-        "letterGrade": _grade_letter_from_percentage(module_percentage) if points_possible else "N/A",
+        "letter": _grade_letter_from_percentage(module_percentage),
+        "letterGrade": _grade_letter_from_percentage(module_percentage),
         "status": module_status,
         "items": assignment_rows,
     }
@@ -860,10 +914,10 @@ def _compute_grade_summary(competition_id, user_id):
     now = datetime.utcnow()
     for module in modules:
         module_assignments = [a for a in assignments if a.module_id == module.id]
-        module_grade = _build_module_grade_breakdown(competition, module, user_id, module_assignments, submission_by_assignment)
-        module_breakdown.append(module_grade)
+        module_breakdown.append(_build_module_grade_breakdown(competition, module, user_id, module_assignments, submission_by_assignment))
+        module_grade = _module_grade_row(module, module_assignments, submission_by_assignment)
         if _is_module_in_grade_scope(module, now=now):
-            scoped_row = _module_grade_row(module, module_assignments, submission_by_assignment)
+            scoped_row = module_grade
             scoped_module_breakdown.append(scoped_row)
             total_scored += scoped_row["pointsEarned"]
             total_possible += scoped_row["pointsPossible"]
@@ -879,27 +933,18 @@ def _compute_grade_summary(competition_id, user_id):
                 "assignmentType": assignment.type,
                 "title": assignment.title,
                 "pointsPossible": assignment.points,
-                "pointsEarned": round(sub.score, 2) if sub else 0.0,
-                "percentage": round(sub.percentage, 2) if sub else 0.0,
+                "pointsEarned": round(sub.score, 2) if sub and sub.score is not None else 0.0,
+                "percentage": round(sub.percentage, 2) if sub and sub.percentage is not None else None,
                 "submittedAt": sub.submitted_at.isoformat() if sub else None,
-                "submissionStatus": "submitted" if sub else "missing",
+                "submissionStatus": "graded" if (sub and sub.auto_graded) else ("submitted" if sub else "missing"),
             })
-    overall_pct = (total_scored / total_possible * 100.0) if total_possible else 0.0
-    if overall_pct >= 90:
-        letter = "A"
-    elif overall_pct >= 80:
-        letter = "B"
-    elif overall_pct >= 70:
-        letter = "C"
-    elif overall_pct >= 60:
-        letter = "D"
-    else:
-        letter = "F"
+    overall_pct = round((total_scored / total_possible * 100.0), 2) if total_possible else None
+    letter = _grade_letter_from_percentage(overall_pct)
     overall_summary = {
         "scope": "released_modules_graded_items",
         "points_earned": round(total_scored, 2),
         "points_possible": round(total_possible, 2),
-        "percentage": round(overall_pct, 2),
+        "percentage": overall_pct,
         "letter": letter,
     }
     return {
@@ -908,7 +953,7 @@ def _compute_grade_summary(competition_id, user_id):
         "userId": user_id,
         "totalPointsEarned": round(total_scored, 2),
         "totalPointsPossible": round(total_possible, 2),
-        "percentage": round(overall_pct, 2),
+        "percentage": overall_pct,
         "letterGrade": letter,
         "moduleGrades": module_breakdown,
         "items": scoped_module_breakdown,
@@ -921,6 +966,8 @@ def _compute_grade_summary(competition_id, user_id):
 
 
 def _grade_letter_from_percentage(overall_pct):
+    if overall_pct is None:
+        return "N/A"
     if overall_pct >= 90:
         return "A"
     if overall_pct >= 80:
@@ -935,6 +982,8 @@ def _grade_letter_from_percentage(overall_pct):
 def _written_submission_status(submission):
     if not submission:
         return "not_submitted"
+    if SubmissionQuestionGrade.query.filter_by(submission_id=submission.id).first():
+        return "graded"
     pending_flag = bool((submission.feedback_json or {}).get("pendingManualGrade", False))
     if submission.graded_at is not None:
         return "graded"
@@ -944,38 +993,65 @@ def _written_submission_status(submission):
         return "graded"
     return "pending_grade"
 
+def _submission_question_grade_rows(submission_id):
+    if not submission_id:
+        return []
+    return SubmissionQuestionGrade.query.filter_by(submission_id=submission_id).all()
 
-def _evaluate_assignment_for_gradebook(assignment, submission):
-    points_possible = float(assignment.points or 0.0)
-    if assignment.type in ("assignment", "written_assignment"):
-        status = _written_submission_status(submission)
-        points_earned = round(float(submission.assignment_total_score if submission and submission.assignment_total_score is not None else 0.0), 2)
-        percentage = round((points_earned / points_possible * 100.0), 2) if points_possible else 0.0
+
+def _computed_submission_grade(submission, assignment):
+    if not submission:
         return {
-            "status": status,
+            "pointsEarned": 0.0,
+            "pointsPossible": float(assignment.points or 0.0),
+            "percentage": None,
+            "status": "not_submitted",
+        }
+    question_rows = _submission_question_grade_rows(submission.id)
+    if question_rows:
+        points_earned = round(sum(float(r.points_awarded or 0.0) for r in question_rows), 2)
+        points_possible = round(sum(float(r.points_possible or 0.0) for r in question_rows), 2)
+        percentage = round((points_earned / points_possible * 100.0), 2) if points_possible > 0 else None
+        return {
             "pointsEarned": points_earned,
             "pointsPossible": points_possible,
             "percentage": percentage,
-            "isManuallyGradable": True,
+            "status": "graded",
         }
 
-    if not submission:
+    if assignment.type in ("assignment", "written_assignment"):
+        status = _written_submission_status(submission)
+        points_earned = round(float(submission.assignment_total_score if submission.assignment_total_score is not None else 0.0), 2)
+        points_possible = float(assignment.points or 0.0)
+        percentage = round((points_earned / points_possible * 100.0), 2) if points_possible > 0 and status == "graded" else None
         return {
-            "status": "not_submitted",
-            "pointsEarned": 0.0,
+            "pointsEarned": points_earned,
             "pointsPossible": points_possible,
-            "percentage": 0.0,
-            "isManuallyGradable": False,
+            "percentage": percentage,
+            "status": status,
         }
 
     points_earned = round(float(submission.score or 0.0), 2)
-    percentage = round(float(submission.percentage or 0.0), 2)
+    points_possible = float(assignment.points or 0.0)
+    percentage = round(float(submission.percentage), 2) if submission.percentage is not None else (
+        round((points_earned / points_possible * 100.0), 2) if points_possible > 0 and submission.auto_graded else None
+    )
     return {
-        "status": "graded" if submission.auto_graded else "submitted",
         "pointsEarned": points_earned,
         "pointsPossible": points_possible,
-        "percentage": percentage,
-        "isManuallyGradable": False,
+        "percentage": percentage if submission.auto_graded else None,
+        "status": "graded" if submission.auto_graded else "submitted",
+    }
+
+
+def _evaluate_assignment_for_gradebook(assignment, submission):
+    computed = _computed_submission_grade(submission, assignment)
+    return {
+        "status": computed["status"],
+        "pointsEarned": computed["pointsEarned"],
+        "pointsPossible": computed["pointsPossible"],
+        "percentage": computed["percentage"],
+        "isManuallyGradable": assignment.type in ("assignment", "written_assignment"),
     }
 
 
@@ -1062,7 +1138,7 @@ def _build_teacher_grade_rows(competition, curriculum, member_ids):
                     "gradedAt": sub.graded_at.isoformat() if sub and sub.graded_at else None,
                 })
 
-        percentage = round((total_points_earned / total_points_possible * 100.0), 2) if total_points_possible else 0.0
+        percentage = round((total_points_earned / total_points_possible * 100.0), 2) if total_points_possible else None
         rows[uid] = {
             "curriculumPercentage": percentage,
             "letterGrade": _grade_letter_from_percentage(percentage),
@@ -2907,6 +2983,7 @@ def curriculum_get_submission(assignment_id, user_id):
     submission = CurriculumSubmission.query.filter_by(assignment_id=assignment_id, user_id=user_id).first()
     if not submission:
         return jsonify({"message": "Submission not found"}), 404
+    question_grades = _submission_question_grade_rows(submission.id)
     return jsonify({
         "assignmentId": assignment_id,
         "userId": user_id,
@@ -2926,6 +3003,16 @@ def curriculum_get_submission(assignment_id, user_id):
         "gradedByUserId": submission.graded_by_user_id,
         "gradedAt": submission.graded_at.isoformat() if submission.graded_at else None,
         "rubricNotes": submission.rubric_notes,
+        "questionGrades": [
+            {
+                "questionId": row.question_id,
+                "pointsAwarded": row.points_awarded,
+                "pointsPossible": row.points_possible,
+                "feedback": row.feedback,
+                "gradedBy": row.graded_by,
+                "gradedAt": row.graded_at.isoformat() if row.graded_at else None,
+            } for row in question_grades
+        ],
     })
 
 
@@ -2960,7 +3047,7 @@ def curriculum_grade_submission(submission_id):
         score_input = data.get("score")
         q1_input = data.get("question_1_score", data.get("question1Score"))
         q2_input = data.get("question_2_score", data.get("question2Score"))
-        if score_input is None and (q1_input is None or q2_input is None):
+        if score_input is None and (q1_input is None and q2_input is None):
             return jsonify({"message": "score is required"}), 422
         try:
             if score_input is not None:
@@ -2968,26 +3055,50 @@ def curriculum_grade_submission(submission_id):
                 q1_score = None
                 q2_score = None
             else:
-                q1_score = float(q1_input)
-                q2_score = float(q2_input)
-                total_score = float(q1_score + q2_score)
+                q1_score = float(q1_input) if q1_input is not None else None
+                q2_score = float(q2_input) if q2_input is not None else None
+                total_score = float((q1_score or 0.0) + (q2_score or 0.0))
         except (TypeError, ValueError):
             return jsonify({"message": "score must be numeric"}), 422
         if total_score < 0:
             return jsonify({"message": "score must be greater than or equal to 0"}), 422
         if assignment.points is not None and total_score > assignment.points:
             return jsonify({"message": "score must be less than or equal to points possible"}), 422
-        submission.question_1_score = round(q1_score, 2) if q1_score is not None else None
-        submission.question_2_score = round(q2_score, 2) if q2_score is not None else None
-        submission.assignment_total_score = round(total_score, 2)
-        submission.score = round(total_score, 2)
-        if "percentage" in data and data.get("percentage") is not None:
+        if q1_score is not None or q2_score is not None:
+            rows = []
+            if q1_score is not None:
+                rows.append({"questionId": "q1", "pointsAwarded": q1_score, "pointsPossible": float(assignment.points or 0.0) / 2.0})
+            if q2_score is not None:
+                rows.append({"questionId": "q2", "pointsAwarded": q2_score, "pointsPossible": float(assignment.points or 0.0) / 2.0})
             try:
-                submission.percentage = round(float(data.get("percentage")), 2)
-            except (TypeError, ValueError):
-                return jsonify({"message": "percentage must be numeric"}), 422
+                computed = _upsert_submission_question_grades(
+                    submission=submission,
+                    assignment=assignment,
+                    teacher_user_id=user.id,
+                    grades=rows,
+                    final_feedback=data.get("feedback"),
+                    rubric_notes=data.get("rubric_notes"),
+                )
+            except ValueError as exc:
+                return jsonify({"message": str(exc)}), 422
+            if "percentage" in data and data.get("percentage") is not None:
+                try:
+                    submission.percentage = round(float(data.get("percentage")), 2)
+                except (TypeError, ValueError):
+                    return jsonify({"message": "percentage must be numeric"}), 422
+            total_score = computed["pointsEarned"]
         else:
-            submission.percentage = round((total_score / assignment.points * 100.0) if assignment.points else 0.0, 2)
+            submission.question_1_score = None
+            submission.question_2_score = None
+            submission.assignment_total_score = round(total_score, 2)
+            submission.score = round(total_score, 2)
+            if "percentage" in data and data.get("percentage") is not None:
+                try:
+                    submission.percentage = round(float(data.get("percentage")), 2)
+                except (TypeError, ValueError):
+                    return jsonify({"message": "percentage must be numeric"}), 422
+            else:
+                submission.percentage = round((total_score / assignment.points * 100.0) if assignment.points else 0.0, 2)
         feedback["pendingManualGrade"] = False
     else:
         return jsonify({"message": "Only written assignments can be manually graded at this endpoint"}), 422
@@ -3021,6 +3132,140 @@ def curriculum_grade_submission(submission_id):
         "isManuallyGradable": True,
         "gradeSummary": updated_summary,
     })
+
+
+def _upsert_submission_question_grades(submission, assignment, teacher_user_id, grades, final_feedback=None, rubric_notes=None):
+    if not isinstance(grades, list) or not grades:
+        raise ValueError("grades must be a non-empty list")
+
+    total_earned = 0.0
+    total_possible = 0.0
+    question_grade_rows = []
+    now = datetime.utcnow()
+
+    for row in grades:
+        question_id = row.get("questionId")
+        if not question_id:
+            raise ValueError("questionId is required for every grade row")
+        try:
+            points_awarded = float(row.get("pointsAwarded"))
+            points_possible = float(row.get("pointsPossible"))
+        except (TypeError, ValueError):
+            raise ValueError("pointsAwarded and pointsPossible must be numeric")
+        if points_awarded < 0 or points_possible < 0:
+            raise ValueError("pointsAwarded and pointsPossible must be non-negative")
+        if points_awarded > points_possible:
+            raise ValueError("pointsAwarded must be <= pointsPossible")
+
+        existing = SubmissionQuestionGrade.query.filter_by(
+            submission_id=submission.id,
+            question_id=str(question_id),
+        ).first()
+        if not existing:
+            existing = SubmissionQuestionGrade(submission_id=submission.id, question_id=str(question_id))
+            db.session.add(existing)
+        existing.points_awarded = round(points_awarded, 2)
+        existing.points_possible = round(points_possible, 2)
+        existing.feedback = row.get("feedback")
+        existing.graded_by = teacher_user_id
+        existing.graded_at = now
+        question_grade_rows.append(existing)
+        total_earned += existing.points_awarded
+        total_possible += existing.points_possible
+
+    total_earned = round(total_earned, 2)
+    total_possible = round(total_possible, 2)
+    percentage = round((total_earned / total_possible * 100.0), 2) if total_possible else None
+
+    submission.score = total_earned
+    submission.assignment_total_score = total_earned
+    submission.percentage = percentage if percentage is not None else 0.0
+    submission.auto_graded = False
+    submission.graded_by_user_id = teacher_user_id
+    submission.graded_at = now
+    submission.rubric_notes = rubric_notes
+    feedback = submission.feedback_json or {}
+    feedback["pendingManualGrade"] = False
+    if final_feedback is not None:
+        feedback["instructorComment"] = final_feedback
+    feedback["gradedAt"] = now.isoformat()
+    submission.feedback_json = feedback
+
+    # Backward-compatible fields for two-question assignments.
+    if len(question_grade_rows) >= 2:
+        ordered = sorted(question_grade_rows, key=lambda r: r.question_id)
+        submission.question_1_score = ordered[0].points_awarded
+        submission.question_2_score = ordered[1].points_awarded
+    elif len(question_grade_rows) == 1:
+        submission.question_1_score = question_grade_rows[0].points_awarded
+        submission.question_2_score = None
+
+    db.session.flush()
+    return {
+        "pointsEarned": total_earned,
+        "pointsPossible": total_possible,
+        "percentage": percentage,
+        "status": "graded",
+    }
+
+
+@app.route('/teacher/submissions/<int:submission_id>/question-grades', methods=['POST'])
+def teacher_submission_question_grades(submission_id):
+    data = request.get_json() or {}
+    requester = data.get("username")
+    user = User.query.filter_by(username=requester).first() if requester else None
+    submission = db.session.get(CurriculumSubmission, submission_id)
+    if not submission:
+        return jsonify({"message": "Submission not found"}), 404
+    assignment = db.session.get(CurriculumAssignment, submission.assignment_id)
+    module = db.session.get(CurriculumModule, assignment.module_id) if assignment else None
+    curriculum = db.session.get(Curriculum, module.curriculum_id) if module else None
+    competition = db.session.get(Competition, curriculum.competition_id) if curriculum else None
+    if not assignment or not module or not curriculum or not competition:
+        return jsonify({"message": "Curriculum context not found"}), 404
+    if not _is_competition_instructor(user, competition):
+        return jsonify({"message": "Instructor access required"}), 403
+    if assignment.type not in ("assignment", "written_assignment"):
+        return jsonify({"message": "Question-level grading is only supported for written assignments"}), 422
+
+    try:
+        computed = _upsert_submission_question_grades(
+            submission=submission,
+            assignment=assignment,
+            teacher_user_id=user.id,
+            grades=data.get("grades"),
+            final_feedback=data.get("finalFeedback"),
+            rubric_notes=data.get("rubricNotes"),
+        )
+        db.session.commit()
+    except ValueError as exc:
+        db.session.rollback()
+        return jsonify({"message": str(exc)}), 422
+
+    updated_summary = _compute_grade_summary(curriculum.competition_id, submission.user_id)
+    question_rows = _submission_question_grade_rows(submission.id)
+    return jsonify({
+        "submissionId": submission.id,
+        "assignmentId": assignment.id,
+        "userId": submission.user_id,
+        "status": computed["status"],
+        "gradingStatus": computed["status"],
+        "pointsEarned": computed["pointsEarned"],
+        "pointsPossible": computed["pointsPossible"],
+        "percentage": computed["percentage"],
+        "finalFeedback": (submission.feedback_json or {}).get("instructorComment"),
+        "questionGrades": [
+            {
+                "questionId": row.question_id,
+                "pointsAwarded": row.points_awarded,
+                "pointsPossible": row.points_possible,
+                "feedback": row.feedback,
+                "gradedBy": row.graded_by,
+                "gradedAt": row.graded_at.isoformat() if row.graded_at else None,
+            } for row in question_rows
+        ],
+        "gradeSummary": updated_summary,
+    }), 200
 
 
 @app.route('/curriculum/competition/<int:competition_id>/written-submissions', methods=['GET'])
@@ -3237,8 +3482,8 @@ def curriculum_teacher_roster(competition_id):
             "userId": uid,
             "displayName": user.username if user else f"user-{uid}",
             "email": user.email if user else None,
-            "curriculumPercentage": grade.get("curriculumPercentage", 0.0),
-            "letterGrade": grade.get("letterGrade", "F"),
+            "curriculumPercentage": grade.get("curriculumPercentage"),
+            "letterGrade": grade.get("letterGrade", "N/A"),
             "totalPointsEarned": grade.get("totalPointsEarned", 0.0),
             "totalPointsPossible": grade.get("totalPointsPossible", 0.0),
             "completedQuizzes": grade.get("completedQuizzes", 0),
@@ -3303,8 +3548,8 @@ def curriculum_teacher_student_detail(competition_id, student_id):
             "email": student.email,
         },
         "gradeSummary": {
-            "curriculumPercentage": grade.get("curriculumPercentage", 0.0),
-            "letterGrade": grade.get("letterGrade", "F"),
+            "curriculumPercentage": grade.get("curriculumPercentage"),
+            "letterGrade": grade.get("letterGrade", "N/A"),
             "totalPointsEarned": grade.get("totalPointsEarned", 0.0),
             "totalPointsPossible": grade.get("totalPointsPossible", 0.0),
             "completedQuizzes": grade.get("completedQuizzes", 0),
