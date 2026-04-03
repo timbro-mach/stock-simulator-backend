@@ -758,6 +758,165 @@ def test_teacher_manual_grade_updates_summary_and_trade_blotter_endpoint(app_cli
     assert trades[0]["side"] == "buy"
 
 
+def test_teacher_question_grade_endpoint_updates_submission_totals(app_client):
+    client, app_module = app_client
+    competition_id, _competition_code, student_id, _quiz_id, written_id = _setup_teacher_dashboard_case(
+        client, app_module, competition_name="Question Grade Totals Cup"
+    )
+    submit_resp = client.post(
+        f"/curriculum/assignments/{written_id}/submissions",
+        json={"username": "student", "competition_id": competition_id, "answers": {"a1": "x", "a2": "y"}},
+    )
+    assert submit_resp.status_code == 200
+
+    with app_module.app.app_context():
+        sub = app_module.CurriculumSubmission.query.filter_by(
+            assignment_id=written_id,
+            user_id=student_id,
+        ).first()
+        submission_id = sub.id
+
+    grade_resp = client.post(
+        f"/teacher/submissions/{submission_id}/question-grades",
+        json={
+            "username": "teacher",
+            "grades": [
+                {"questionId": "a1", "pointsAwarded": 8, "pointsPossible": 10, "feedback": "Good"},
+                {"questionId": "a2", "pointsAwarded": 7, "pointsPossible": 10, "feedback": "Solid"},
+            ],
+            "finalFeedback": "Overall good work",
+        },
+    )
+    assert grade_resp.status_code == 200
+    payload = grade_resp.get_json()
+    assert payload["pointsEarned"] == 15
+    assert payload["pointsPossible"] == 20
+    assert payload["percentage"] == 75.0
+    assert payload["status"] == "graded"
+    assert len(payload["questionGrades"]) == 2
+
+
+def test_student_and_teacher_grade_views_match_after_manual_question_grading(app_client):
+    client, app_module = app_client
+    competition_id, _competition_code, student_id, _quiz_id, written_id = _setup_teacher_dashboard_case(
+        client, app_module, competition_name="Grade Sync Cup"
+    )
+    submit_resp = client.post(
+        f"/curriculum/assignments/{written_id}/submissions",
+        json={"username": "student", "competition_id": competition_id, "answers": {"a1": "x", "a2": "y"}},
+    )
+    assert submit_resp.status_code == 200
+
+    with app_module.app.app_context():
+        sub = app_module.CurriculumSubmission.query.filter_by(assignment_id=written_id, user_id=student_id).first()
+        submission_id = sub.id
+
+    grade_resp = client.post(
+        f"/teacher/submissions/{submission_id}/question-grades",
+        json={
+            "username": "teacher",
+            "grades": [{"questionId": "a1", "pointsAwarded": 9, "pointsPossible": 10}],
+            "finalFeedback": "Partial but graded",
+        },
+    )
+    assert grade_resp.status_code == 200
+
+    student_resp = client.get(
+        f"/curriculum/competition/{competition_id}/grades/{student_id}",
+        query_string={"username": "student"},
+    )
+    teacher_resp = client.get(
+        f"/curriculum/competition/{competition_id}/teacher/students/{student_id}",
+        query_string={"username": "teacher"},
+    )
+    assert student_resp.status_code == 200
+    assert teacher_resp.status_code == 200
+    student_payload = student_resp.get_json()
+    teacher_payload = teacher_resp.get_json()
+    assert student_payload["totalPointsEarned"] == teacher_payload["gradeSummary"]["totalPointsEarned"]
+    assert student_payload["totalPointsPossible"] == teacher_payload["gradeSummary"]["totalPointsPossible"]
+    assert student_payload["percentage"] == teacher_payload["gradeSummary"]["curriculumPercentage"]
+
+
+def test_partial_grading_marks_assignment_as_graded(app_client):
+    client, app_module = app_client
+    competition_id, _competition_code, student_id, _quiz_id, written_id = _setup_teacher_dashboard_case(
+        client, app_module, competition_name="Partial Rule Cup"
+    )
+    submit_resp = client.post(
+        f"/curriculum/assignments/{written_id}/submissions",
+        json={"username": "student", "competition_id": competition_id, "answers": {"a1": "x", "a2": "y"}},
+    )
+    assert submit_resp.status_code == 200
+    with app_module.app.app_context():
+        sub = app_module.CurriculumSubmission.query.filter_by(assignment_id=written_id, user_id=student_id).first()
+        submission_id = sub.id
+
+    grade_resp = client.post(
+        f"/teacher/submissions/{submission_id}/question-grades",
+        json={"username": "teacher", "grades": [{"questionId": "a1", "pointsAwarded": 5, "pointsPossible": 10}]},
+    )
+    assert grade_resp.status_code == 200
+    assert grade_resp.get_json()["status"] == "graded"
+
+    detail_resp = client.get(
+        f"/curriculum/competition/{competition_id}/teacher/students/{student_id}",
+        query_string={"username": "teacher"},
+    )
+    assignment_item = next(item for item in detail_resp.get_json()["items"] if item["assignmentType"] == "assignment")
+    assert assignment_item["gradingStatus"] == "graded"
+
+
+def test_null_safe_percentages_when_no_graded_work_exists(app_client):
+    client, app_module = app_client
+    competition_id, _competition_code, student_id, _quiz_id, _written_id = _setup_teacher_dashboard_case(
+        client, app_module, competition_name="Null Safe Grades Cup"
+    )
+    student_resp = client.get(
+        f"/curriculum/competition/{competition_id}/grades/{student_id}",
+        query_string={"username": "student"},
+    )
+    teacher_resp = client.get(
+        f"/curriculum/competition/{competition_id}/teacher/students/{student_id}",
+        query_string={"username": "teacher"},
+    )
+    assert student_resp.status_code == 200
+    assert teacher_resp.status_code == 200
+    assert student_resp.get_json()["percentage"] is None
+    assert teacher_resp.get_json()["gradeSummary"]["curriculumPercentage"] is None
+
+
+def test_regrading_upsert_replaces_question_scores_and_recalculates(app_client):
+    client, app_module = app_client
+    competition_id, _competition_code, student_id, _quiz_id, written_id = _setup_teacher_dashboard_case(
+        client, app_module, competition_name="Regrade Upsert Cup"
+    )
+    submit_resp = client.post(
+        f"/curriculum/assignments/{written_id}/submissions",
+        json={"username": "student", "competition_id": competition_id, "answers": {"a1": "x", "a2": "y"}},
+    )
+    assert submit_resp.status_code == 200
+    with app_module.app.app_context():
+        sub = app_module.CurriculumSubmission.query.filter_by(assignment_id=written_id, user_id=student_id).first()
+        submission_id = sub.id
+
+    first_grade = client.post(
+        f"/teacher/submissions/{submission_id}/question-grades",
+        json={"username": "teacher", "grades": [{"questionId": "a1", "pointsAwarded": 8, "pointsPossible": 10}]},
+    )
+    assert first_grade.status_code == 200
+    assert first_grade.get_json()["pointsEarned"] == 8
+
+    regrade = client.post(
+        f"/teacher/submissions/{submission_id}/question-grades",
+        json={"username": "teacher", "grades": [{"questionId": "a1", "pointsAwarded": 10, "pointsPossible": 10}]},
+    )
+    assert regrade.status_code == 200
+    payload = regrade.get_json()
+    assert payload["pointsEarned"] == 10
+    assert payload["percentage"] == 100.0
+
+
 def test_grade_summary_uses_released_graded_scope_and_95_percent_quiz_case(app_client):
     client, app_module = app_client
     competition_id, _competition_code, student_id, quiz_id, _written_id = _setup_teacher_dashboard_case(
