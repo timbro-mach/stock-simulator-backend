@@ -1162,8 +1162,16 @@ def _build_teacher_grade_rows(competition, curriculum, member_ids):
     return rows
 
 
-def _resolve_curriculum_competition_id(raw_competition_id):
+def _resolve_curriculum_competition_id(raw_competition_id, requester_user_id=None):
     competition = db.session.get(Competition, raw_competition_id)
+    competition_member = db.session.get(CompetitionMember, raw_competition_id)
+    if (
+        requester_user_id is not None
+        and competition_member
+        and competition_member.user_id == requester_user_id
+    ):
+        return competition_member.competition_id
+
     curriculum_for_competition = (
         Curriculum.query.filter_by(competition_id=competition.id).first()
         if competition
@@ -1172,7 +1180,6 @@ def _resolve_curriculum_competition_id(raw_competition_id):
     if competition and curriculum_for_competition:
         return competition.id
 
-    competition_member = db.session.get(CompetitionMember, raw_competition_id)
     if competition_member:
         return competition_member.competition_id
 
@@ -2752,7 +2759,10 @@ def curriculum_grades(competition_id, user_id):
     if not requester:
         return jsonify({"message": "Authentication required"}), 401
     requesting_user = User.query.filter_by(username=requester).first()
-    resolved_competition_id = _resolve_curriculum_competition_id(competition_id)
+    resolved_competition_id = _resolve_curriculum_competition_id(
+        competition_id,
+        requester_user_id=requesting_user.id,
+    )
     competition = db.session.get(Competition, resolved_competition_id)
     if not competition:
         return jsonify({"message": "Competition not found"}), 404
@@ -3450,7 +3460,10 @@ def curriculum_teacher_roster(competition_id):
     if not requesting_user:
         return jsonify({"message": "Invalid credentials"}), 401
 
-    resolved_competition_id = _resolve_curriculum_competition_id(competition_id)
+    resolved_competition_id = _resolve_curriculum_competition_id(
+        competition_id,
+        requester_user_id=requesting_user.id,
+    )
     competition = db.session.get(Competition, resolved_competition_id)
     if not competition:
         return jsonify({"message": "Competition not found"}), 404
@@ -3515,7 +3528,10 @@ def curriculum_teacher_student_detail(competition_id, student_id):
     if not requesting_user:
         return jsonify({"message": "Invalid credentials"}), 401
 
-    resolved_competition_id = _resolve_curriculum_competition_id(competition_id)
+    resolved_competition_id = _resolve_curriculum_competition_id(
+        competition_id,
+        requester_user_id=requesting_user.id,
+    )
     competition = db.session.get(Competition, resolved_competition_id)
     if not competition:
         return jsonify({"message": "Competition not found"}), 404
@@ -3575,7 +3591,10 @@ def curriculum_teacher_student_trades(competition_id, student_id):
     if not requesting_user:
         return jsonify({"message": "Invalid credentials"}), 401
 
-    resolved_competition_id = _resolve_curriculum_competition_id(competition_id)
+    resolved_competition_id = _resolve_curriculum_competition_id(
+        competition_id,
+        requester_user_id=requesting_user.id,
+    )
     competition = db.session.get(Competition, resolved_competition_id)
     if not competition:
         return jsonify({"message": "Competition not found"}), 404

@@ -321,6 +321,67 @@ def test_curriculum_grades_accepts_member_account_id_and_checks_membership(app_c
     assert nonmember_resp.status_code == 404
 
 
+def test_curriculum_grades_prefers_requester_membership_when_member_id_collides_with_competition_id(app_client):
+    client, app_module = app_client
+    create_user(app_module, username="teacher", email="teacher@example.com")
+    create_user(app_module, username="student", email="student@example.com")
+    create_user(app_module, username="dummy", email="dummy@example.com")
+
+    target_resp = _create_competition(client, {
+        "username": "teacher",
+        "competition_name": "Collision Target Cup",
+        "curriculumEnabled": True,
+        "curriculumWeeks": 4,
+        "curriculumStartDate": "2026-01-01",
+        "curriculumEndDate": "2026-02-15",
+    })
+    assert target_resp.status_code == 200
+
+    other_resp = _create_competition(client, {
+        "username": "teacher",
+        "competition_name": "Collision Other Cup",
+        "curriculumEnabled": True,
+        "curriculumWeeks": 4,
+        "curriculumStartDate": "2026-01-01",
+        "curriculumEndDate": "2026-02-15",
+    })
+    assert other_resp.status_code == 200
+
+    with app_module.app.app_context():
+        target_comp = app_module.Competition.query.filter_by(name="Collision Target Cup").first()
+        other_comp = app_module.Competition.query.filter_by(name="Collision Other Cup").first()
+        student = app_module.User.query.filter_by(username="student").first()
+        dummy = app_module.User.query.filter_by(username="dummy").first()
+
+        app_module.db.session.add(app_module.CompetitionMember(
+            competition_id=target_comp.id,
+            user_id=dummy.id,
+            cash_balance=100000,
+        ))
+        app_module.db.session.commit()
+
+        student_member = app_module.CompetitionMember(
+            competition_id=target_comp.id,
+            user_id=student.id,
+            cash_balance=100000,
+        )
+        app_module.db.session.add(student_member)
+        app_module.db.session.commit()
+
+        assert student_member.id == other_comp.id
+
+        colliding_member_id = student_member.id
+        expected_competition_id = target_comp.id
+        student_id = student.id
+
+    resp = client.get(
+        f"/curriculum/competition/{colliding_member_id}/grades/{student_id}",
+        query_string={"username": "student"},
+    )
+    assert resp.status_code == 200
+    assert resp.get_json()["competitionId"] == expected_competition_id
+
+
 def test_curriculum_endpoints_do_not_interfere_with_simulator_endpoints(app_client, monkeypatch):
     client, app_module = app_client
     create_user(app_module, username="teacher", email="teacher@example.com")
