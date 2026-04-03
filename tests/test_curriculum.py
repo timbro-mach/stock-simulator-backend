@@ -578,7 +578,9 @@ def test_module_grade_breakdown_includes_trade_participation_and_competition_gra
         query_string={"username": "student"},
     )
     assert grades_resp.status_code == 200
-    module_grades = grades_resp.get_json()["moduleGrades"]
+    payload = grades_resp.get_json()
+    assert payload["gradeSummary"]["progressPercentage"] == payload["progressPercentage"]
+    module_grades = payload["moduleGrades"]
     assert module_grades
     assert module_grades[0]["tradeParticipation"]["tradeCompleted"] is True
     assert module_grades[0]["tradeParticipation"]["tradePoints"] == 10
@@ -589,6 +591,35 @@ def test_module_grade_breakdown_includes_trade_participation_and_competition_gra
     )
     assert competition_gradebook_resp.status_code == 200
     assert competition_gradebook_resp.get_json()["studentCount"] == 1
+
+
+def test_curriculum_grades_invalid_path_returns_json_404(app_client):
+    client, app_module = app_client
+    create_user(app_module, username="teacher", email="teacher@example.com")
+    create_user(app_module, username="student", email="student@example.com")
+
+    resp = _create_competition(client, {
+        "username": "teacher",
+        "competition_name": "Grades Path Validation Cup",
+        "curriculumEnabled": True,
+        "curriculumWeeks": 2,
+        "curriculumStartDate": "2026-01-01",
+        "curriculumEndDate": "2026-01-30",
+    })
+    assert resp.status_code == 200
+
+    with app_module.app.app_context():
+        comp = app_module.Competition.query.filter_by(name="Grades Path Validation Cup").first()
+        competition_id = comp.id
+
+    invalid_resp = client.get(
+        f"/curriculum/competition/{competition_id}/grades/not-an-int",
+        query_string={"username": "student"},
+    )
+    assert invalid_resp.status_code == 404
+    payload = invalid_resp.get_json()
+    assert payload["code"] == "not_found"
+    assert payload["message"]
 
 
 def test_curriculum_summary_accepts_competition_member_account_id(app_client):

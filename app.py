@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify
+from werkzeug.exceptions import HTTPException
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_sqlalchemy import SQLAlchemy
@@ -27,6 +28,19 @@ CORS(app, origins=[
     "https://simulator.gostockpro.com",
     "http://localhost:3000"
 ])
+
+
+def _error_payload(message, code):
+    return {"message": message, "code": code}
+
+
+@app.errorhandler(404)
+def handle_not_found(err):
+    if isinstance(err, HTTPException) and err.description and err.description != "404 Not Found: The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.":
+        message = err.description
+    else:
+        message = "Not found"
+    return jsonify(_error_payload(message, "not_found")), 404
 
 # --- Database Configuration ---
 raw_db_url = os.getenv("DATABASE_URL", "").strip()
@@ -2794,17 +2808,17 @@ def curriculum_modules(competition_id):
 def curriculum_grades(competition_id, user_id):
     requester = request.args.get("username")
     if not requester:
-        return jsonify({"message": "Authentication required"}), 401
+        return jsonify(_error_payload("Authentication required", "auth_required")), 401
     requesting_user = User.query.filter_by(username=requester).first()
     if not requesting_user:
-        return jsonify({"message": "Invalid credentials"}), 401
+        return jsonify(_error_payload("Invalid credentials", "invalid_credentials")), 401
     resolved_competition_id = _resolve_curriculum_competition_id(
         competition_id,
         requester_user_id=requesting_user.id,
     )
     competition = db.session.get(Competition, resolved_competition_id)
     if not competition:
-        return jsonify({"message": "Competition not found"}), 404
+        return jsonify(_error_payload("Competition not found", "competition_not_found")), 404
 
     # Frontends may pass either a User.id or a CompetitionMember.id in the path.
     # Prefer the requester's own membership row when ids collide.
@@ -2826,21 +2840,24 @@ def curriculum_grades(competition_id, user_id):
         target_user_id = None
 
     if target_user_id is None or not target_user:
-        return jsonify({"message": "User not found"}), 404
+        return jsonify(_error_payload("User not found", "user_not_found")), 404
     if requesting_user.id != target_user_id and not _is_competition_instructor(requesting_user, competition):
-        return jsonify({"message": "Forbidden"}), 403
+        return jsonify(_error_payload("Forbidden", "forbidden")), 403
 
     competition_membership = CompetitionMember.query.filter_by(
         competition_id=resolved_competition_id,
         user_id=target_user_id,
     ).first()
     if not competition_membership:
-        return jsonify({"message": "No grade records found for this user in the specified competition"}), 404
+        return jsonify(_error_payload("No grade records found for this user in the specified competition", "grade_records_not_found")), 404
 
     summary = _compute_grade_summary(resolved_competition_id, target_user_id)
     if summary is None:
-        return jsonify({"message": "Curriculum not enabled for this competition"}), 404
-    return jsonify(summary)
+        return jsonify(_error_payload("Curriculum not enabled for this competition", "curriculum_not_enabled")), 404
+    return jsonify({
+        **summary,
+        "gradeSummary": summary,
+    })
 
 
 @app.route('/curriculum/competition/<int:competition_id>/grades', methods=['GET'])
