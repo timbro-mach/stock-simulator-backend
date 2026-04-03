@@ -396,7 +396,7 @@ def test_curriculum_grades_prefers_requester_membership_when_member_id_collides_
 
         student_member = app_module.CompetitionMember(
             competition_id=target_comp.id,
-            user_id=student.id,
+            user_id=student_id,
             cash_balance=100000,
         )
         app_module.db.session.add(student_member)
@@ -673,7 +673,7 @@ def test_curriculum_endpoints_resolve_member_account_id_when_ids_collide(app_cli
         student = app_module.User.query.filter_by(username="student").first()
         member = app_module.CompetitionMember(
             competition_id=curriculum_competition_id,
-            user_id=student.id,
+            user_id=student_id,
             cash_balance=100000,
         )
         app_module.db.session.add(member)
@@ -1334,7 +1334,7 @@ def test_teacher_roster_prefers_competition_id_when_member_id_collides(app_clien
 
         baseline_member_1 = app_module.CompetitionMember(
             competition_id=baseline_comp.id,
-            user_id=student.id,
+            user_id=student_id,
             cash_balance=100000,
         )
         baseline_member_2 = app_module.CompetitionMember(
@@ -1344,7 +1344,7 @@ def test_teacher_roster_prefers_competition_id_when_member_id_collides(app_clien
         )
         target_member = app_module.CompetitionMember(
             competition_id=target_comp.id,
-            user_id=student.id,
+            user_id=student_id,
             cash_balance=100000,
         )
         app_module.db.session.add_all([baseline_member_1, baseline_member_2, target_member])
