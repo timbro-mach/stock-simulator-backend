@@ -103,6 +103,8 @@ def test_login_and_user_skip_orphaned_team_records_and_keep_competition_accounts
     assert len(login_payload["competition_accounts"]) == 1
     assert login_payload["competition_accounts"][0]["competition_code"] == "LEG123"
     assert login_payload["competition_accounts"][0]["account_type"] == "competition"
+    assert login_payload["competition_accounts"][0]["user_id"] is not None
+    assert login_payload["competition_accounts"][0]["competition_member_id"] == login_payload["competition_accounts"][0]["account_id"]
     assert login_payload["team_competitions"] == []
 
     user_resp = client.get("/user", query_string={"username": "legacy"})
@@ -111,6 +113,8 @@ def test_login_and_user_skip_orphaned_team_records_and_keep_competition_accounts
     assert len(payload["competition_accounts"]) == 1
     assert payload["competition_accounts"][0]["competition_code"] == "LEG123"
     assert payload["competition_accounts"][0]["account_type"] == "competition"
+    assert payload["competition_accounts"][0]["user_id"] is not None
+    assert payload["competition_accounts"][0]["competition_member_id"] == payload["competition_accounts"][0]["account_id"]
     assert payload["team_competitions"] == []
 
 

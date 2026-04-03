@@ -977,8 +977,11 @@ def _compute_grade_summary(competition_id, user_id):
     }
     return {
         "curriculumId": curriculum.id,
+        "curriculum_id": curriculum.id,
         "competitionId": competition_id,
+        "competition_id": competition_id,
         "userId": user_id,
+        "user_id": user_id,
         "totalPointsEarned": round(total_scored, 2),
         "totalPointsPossible": round(total_possible, 2),
         "percentage": overall_pct,
@@ -2007,6 +2010,10 @@ def login():
 
                 competition_accounts.append({
                     "account_id": m.id,
+                    "competition_member_id": m.id,
+                    "competitionMemberId": m.id,
+                    "user_id": user.id,
+                    "userId": user.id,
                     "competition_id": comp.id,
                     "code": comp.code,
                     "competition_code": comp.code,
@@ -2293,6 +2300,10 @@ def get_user():
 
         competition_accounts.append({
             'account_id': m.id,
+            'competition_member_id': m.id,
+            'competitionMemberId': m.id,
+            'user_id': user.id,
+            'userId': user.id,
             'competition_id': comp.id,
             'code': comp.code,
             'competition_code': comp.code,
@@ -3033,6 +3044,7 @@ def curriculum_submit_assignment(assignment_id):
         "competitionId": curriculum.competition_id,
         "competition_id": curriculum.competition_id,
         "userId": user.id,
+        "user_id": user.id,
         "answers": submission.answers_json,
         "score": submission.score,
         "pointsEarned": submission.score,
@@ -3356,16 +3368,23 @@ def teacher_submission_question_grades(submission_id):
 
 
 @app.route('/curriculum/competition/<int:competition_id>/written-submissions', methods=['GET'])
+@app.route('/curriculum/competition/<int:competition_id>/instructor/submissions', methods=['GET'])
+@app.route('/curriculum/competition/<int:competition_id>/teacher/submissions', methods=['GET'])
+@app.route('/curriculum/competition/<int:competition_id>/submissions', methods=['GET'])
 def curriculum_competition_written_submissions(competition_id):
     requester = request.args.get("username")
     user = User.query.filter_by(username=requester).first() if requester else None
-    competition = db.session.get(Competition, competition_id)
+    resolved_competition_id = _resolve_curriculum_competition_id(
+        competition_id,
+        requester_user_id=user.id if user else None,
+    )
+    competition = db.session.get(Competition, resolved_competition_id)
     if not competition:
         return jsonify({"message": "Competition not found"}), 404
     if not _is_competition_instructor(user, competition):
         return jsonify({"message": "Instructor access required"}), 403
 
-    curriculum = Curriculum.query.filter_by(competition_id=competition_id, enabled=True).first()
+    curriculum = Curriculum.query.filter_by(competition_id=resolved_competition_id, enabled=True).first()
     if not curriculum:
         return jsonify({"message": "Curriculum not enabled for this competition"}), 404
 
@@ -3402,7 +3421,7 @@ def curriculum_competition_written_submissions(competition_id):
         })
 
     return jsonify({
-        "competitionId": competition_id,
+        "competitionId": resolved_competition_id,
         "curriculumId": curriculum.id,
         "totalSubmissions": len(payload),
         "submissions": payload,
@@ -3410,22 +3429,29 @@ def curriculum_competition_written_submissions(competition_id):
 
 
 @app.route('/curriculum/competition/<int:competition_id>/instructor-overview', methods=['GET'])
+@app.route('/curriculum/competition/<int:competition_id>/teacher-overview', methods=['GET'])
+@app.route('/curriculum/competition/<int:competition_id>/instructor/overview', methods=['GET'])
+@app.route('/curriculum/competition/<int:competition_id>/teacher/overview', methods=['GET'])
 def curriculum_instructor_overview(competition_id):
     requester = request.args.get("username")
     user = User.query.filter_by(username=requester).first() if requester else None
-    competition = db.session.get(Competition, competition_id)
+    resolved_competition_id = _resolve_curriculum_competition_id(
+        competition_id,
+        requester_user_id=user.id if user else None,
+    )
+    competition = db.session.get(Competition, resolved_competition_id)
     if not competition:
         return jsonify({"message": "Competition not found"}), 404
     if not _is_competition_instructor(user, competition):
         return jsonify({"message": "Instructor access required"}), 403
-    curriculum = Curriculum.query.filter_by(competition_id=competition_id, enabled=True).first()
+    curriculum = Curriculum.query.filter_by(competition_id=resolved_competition_id, enabled=True).first()
     if not curriculum:
         return jsonify({"message": "Curriculum not enabled for this competition"}), 404
     modules = CurriculumModule.query.filter_by(curriculum_id=curriculum.id).order_by(CurriculumModule.week_number.asc()).all()
     module_ids = [m.id for m in modules]
     assignments = CurriculumAssignment.query.filter(CurriculumAssignment.module_id.in_(module_ids)).all() if module_ids else []
     assignment_ids = [a.id for a in assignments]
-    member_ids = [m.user_id for m in CompetitionMember.query.filter_by(competition_id=competition_id).all()]
+    member_ids = [m.user_id for m in CompetitionMember.query.filter_by(competition_id=resolved_competition_id).all()]
     submissions = CurriculumSubmission.query.filter(
         CurriculumSubmission.assignment_id.in_(assignment_ids),
         CurriculumSubmission.user_id.in_(member_ids)
@@ -3434,11 +3460,12 @@ def curriculum_instructor_overview(competition_id):
     by_user = {}
     for uid in member_ids:
         by_user[uid] = {"earned": 0.0, "submitted": 0, "moduleGrades": []}
-        user_summary = _compute_grade_summary(competition_id, uid)
+        user_summary = _compute_grade_summary(resolved_competition_id, uid)
         if user_summary:
             by_user[uid]["earned"] = user_summary.get("totalPointsEarned", 0.0)
             by_user[uid]["possible"] = user_summary.get("totalPointsPossible", 0.0)
-            by_user[uid]["percentage"] = user_summary.get("percentage", 0.0)
+            percentage = user_summary.get("percentage")
+            by_user[uid]["percentage"] = percentage if percentage is not None else 0.0
             by_user[uid]["moduleGrades"] = user_summary.get("moduleGrades", [])
         else:
             by_user[uid]["possible"] = 0.0
@@ -3515,7 +3542,7 @@ def curriculum_instructor_overview(competition_id):
         })
 
     return jsonify({
-        "competitionId": competition_id,
+        "competitionId": resolved_competition_id,
         "curriculumId": curriculum.id,
         "students": student_rows,
         "assignments": assignment_rows,
@@ -3526,6 +3553,14 @@ def curriculum_instructor_overview(competition_id):
         "totalAssignments": len(assignments),
         "totalStudents": len(member_ids),
     })
+
+
+@app.route('/curriculum/submissions', methods=['GET'])
+def curriculum_submissions_by_query():
+    competition_id = request.args.get("competition_id", type=int)
+    if competition_id is None:
+        return jsonify({"message": "competition_id is required"}), 400
+    return curriculum_competition_written_submissions(competition_id)
 
 
 @app.route('/curriculum/competition/<int:competition_id>/teacher/roster', methods=['GET'])
