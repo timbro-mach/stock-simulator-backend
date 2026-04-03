@@ -1271,3 +1271,54 @@ def test_multipart_written_submission_persists_and_visible_in_teacher_detail(app
     assert written_item["gradingStatus"] == "pending_grade"
     assert isinstance(written_item["submissionContent"], dict)
     assert written_item["submissionContent"]["answers"][0]["parts"][0]["response"].startswith("Diversification")
+
+
+def test_legacy_quiz_without_answer_key_counts_toward_grade_summary(app_client):
+    client, app_module = app_client
+    competition_id, _competition_code, student_id, quiz_id, written_id = _setup_teacher_dashboard_case(
+        client, app_module, competition_name="Legacy Quiz Keyless Cup"
+    )
+
+    with app_module.app.app_context():
+        quiz = app_module.db.session.get(app_module.CurriculumAssignment, quiz_id)
+        quiz.answer_key_json = None
+        app_module.db.session.commit()
+
+    quiz_submit = client.post(
+        f"/curriculum/assignments/{quiz_id}/submissions",
+        json={
+            "username": "student",
+            "competition_id": competition_id,
+            "answers": [{"questionId": "q1", "selectedChoice": "Incorrect"}],
+        },
+    )
+    assert quiz_submit.status_code == 200
+
+    written_submit = client.post(
+        f"/curriculum/assignments/{written_id}/submissions",
+        json={
+            "username": "student",
+            "competition_id": competition_id,
+            "answers": [{"questionId": "q1", "response": "Short answer"}],
+        },
+    )
+    assert written_submit.status_code == 200
+
+    roster_resp = client.get(
+        f"/curriculum/competition/{competition_id}/teacher/roster",
+        query_string={"username": "teacher"},
+    )
+    assert roster_resp.status_code == 200
+    row = next(r for r in roster_resp.get_json()["roster"] if r["userId"] == student_id)
+    assert row["completedQuizzes"] == 1
+    assert row["completedAssignments"] == 1
+    assert row["totalPointsPossible"] > 0
+    assert row["curriculumPercentage"] == 0.0
+
+    student_summary_resp = client.get(
+        f"/curriculum/competition/{competition_id}/grades/{student_id}",
+        query_string={"username": "student"},
+    )
+    assert student_summary_resp.status_code == 200
+    summary_payload = student_summary_resp.get_json()
+    assert summary_payload["totalPointsPossible"] > 0

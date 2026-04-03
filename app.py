@@ -1033,14 +1033,16 @@ def _computed_submission_grade(submission, assignment):
 
     points_earned = round(float(submission.score or 0.0), 2)
     points_possible = float(assignment.points or 0.0)
+    has_answer_key = bool((assignment.answer_key_json or {}).get("questions"))
+    should_treat_as_graded = submission.auto_graded or (assignment.type in ("quiz", "exam") and not has_answer_key)
     percentage = round(float(submission.percentage), 2) if submission.percentage is not None else (
-        round((points_earned / points_possible * 100.0), 2) if points_possible > 0 and submission.auto_graded else None
+        round((points_earned / points_possible * 100.0), 2) if points_possible > 0 and should_treat_as_graded else None
     )
     return {
         "pointsEarned": points_earned,
         "pointsPossible": points_possible,
-        "percentage": percentage if submission.auto_graded else None,
-        "status": "graded" if submission.auto_graded else "submitted",
+        "percentage": percentage if should_treat_as_graded else None,
+        "status": "graded" if should_treat_as_graded else "submitted",
     }
 
 
