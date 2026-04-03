@@ -3454,6 +3454,7 @@ def curriculum_instructor_overview(competition_id):
 
 
 @app.route('/curriculum/competition/<int:competition_id>/teacher/roster', methods=['GET'])
+@app.route('/curriculum/competition/<int:competition_id>/instructor/roster', methods=['GET'])
 def curriculum_teacher_roster(competition_id):
     requester = request.args.get("username")
     if not requester:
@@ -3498,6 +3499,7 @@ def curriculum_teacher_roster(competition_id):
             "displayName": user.username if user else f"user-{uid}",
             "email": user.email if user else None,
             "curriculumPercentage": grade.get("curriculumPercentage"),
+            "percentage": grade.get("curriculumPercentage"),
             "letterGrade": grade.get("letterGrade", "N/A"),
             "totalPointsEarned": grade.get("totalPointsEarned", 0.0),
             "totalPointsPossible": grade.get("totalPointsPossible", 0.0),
@@ -3509,7 +3511,9 @@ def curriculum_teacher_roster(competition_id):
             "latestQuizSubmission": latest_quiz,
             "latestWrittenSubmission": latest_written,
             "grade_summary_overall": grade.get("grade_summary_overall", {}),
+            "gradeSummaryOverall": grade.get("grade_summary_overall", {}),
             "grade_summary_by_module": grade.get("grade_summary_by_module", []),
+            "gradeSummaryByModule": grade.get("grade_summary_by_module", []),
         })
 
     return jsonify({
@@ -3522,6 +3526,7 @@ def curriculum_teacher_roster(competition_id):
 
 
 @app.route('/curriculum/competition/<int:competition_id>/teacher/students/<int:student_id>', methods=['GET'])
+@app.route('/curriculum/competition/<int:competition_id>/instructor/students/<int:student_id>', methods=['GET'])
 def curriculum_teacher_student_detail(competition_id, student_id):
     requester = request.args.get("username")
     if not requester:
@@ -3567,6 +3572,7 @@ def curriculum_teacher_student_detail(competition_id, student_id):
         },
         "gradeSummary": {
             "curriculumPercentage": grade.get("curriculumPercentage"),
+            "percentage": grade.get("curriculumPercentage"),
             "letterGrade": grade.get("letterGrade", "N/A"),
             "totalPointsEarned": grade.get("totalPointsEarned", 0.0),
             "totalPointsPossible": grade.get("totalPointsPossible", 0.0),
@@ -3576,10 +3582,14 @@ def curriculum_teacher_student_detail(competition_id, student_id):
             "hasTrades": grade.get("hasTrades", False),
             "tradeCount": grade.get("tradeCount", 0),
             "grade_summary_overall": grade.get("grade_summary_overall", {}),
+            "gradeSummaryOverall": grade.get("grade_summary_overall", {}),
             "grade_summary_by_module": grade.get("grade_summary_by_module", []),
+            "gradeSummaryByModule": grade.get("grade_summary_by_module", []),
         },
         "grade_summary_overall": grade.get("grade_summary_overall", {}),
+        "gradeSummaryOverall": grade.get("grade_summary_overall", {}),
         "grade_summary_by_module": grade.get("grade_summary_by_module", []),
+        "gradeSummaryByModule": grade.get("grade_summary_by_module", []),
         "items": items,
     }), 200
 
