@@ -2010,6 +2010,10 @@ def login():
 
                 competition_accounts.append({
                     "account_id": m.id,
+                    "competition_member_id": m.id,
+                    "competitionMemberId": m.id,
+                    "user_id": user.id,
+                    "userId": user.id,
                     "competition_id": comp.id,
                     "code": comp.code,
                     "competition_code": comp.code,
@@ -2296,6 +2300,10 @@ def get_user():
 
         competition_accounts.append({
             'account_id': m.id,
+            'competition_member_id': m.id,
+            'competitionMemberId': m.id,
+            'user_id': user.id,
+            'userId': user.id,
             'competition_id': comp.id,
             'code': comp.code,
             'competition_code': comp.code,
