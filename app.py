@@ -1067,8 +1067,9 @@ def _computed_submission_grade(submission, assignment):
 
     points_earned = round(float(submission.score or 0.0), 2)
     points_possible = float(assignment.points or 0.0)
-    has_answer_key = bool((assignment.answer_key_json or {}).get("questions"))
-    should_treat_as_graded = submission.auto_graded or (assignment.type in ("quiz", "exam") and not has_answer_key)
+    has_answer_key = bool(_quiz_answer_key_map(assignment))
+    assignment_type = (assignment.type or "").lower()
+    should_treat_as_graded = submission.auto_graded or (assignment_type in ("quiz", "exam") and not has_answer_key)
     percentage = round(float(submission.percentage), 2) if submission.percentage is not None else (
         round((points_earned / points_possible * 100.0), 2) if points_possible > 0 and should_treat_as_graded else None
     )
@@ -1379,6 +1380,16 @@ def _normalize_submission_answers(assignment, answers):
         raise ValueError("answers cannot be empty.")
     return {"answers": normalized_answers}
 
+
+
+
+def _quiz_answer_key_map(assignment):
+    if not assignment:
+        return {}
+    raw_questions = (assignment.answer_key_json or {}).get("questions")
+    if not isinstance(raw_questions, dict):
+        return {}
+    return {str(qid): expected for qid, expected in raw_questions.items()}
 
 def _quiz_answer_map_from_submission(answers_json):
     if isinstance(answers_json, dict) and isinstance(answers_json.get("answers"), list):
@@ -2988,8 +2999,8 @@ def curriculum_submit_assignment(assignment_id):
     auto_graded = False
     feedback = {"lateSubmission": datetime.utcnow() > module.due_date}
     if assignment.type in ("quiz", "exam"):
-        answer_key = (assignment.answer_key_json or {}).get("questions", {})
-        if isinstance(answer_key, dict) and answer_key:
+        answer_key = _quiz_answer_key_map(assignment)
+        if answer_key:
             total_questions = len(answer_key)
             correct = 0
             mapped_answers = _quiz_answer_map_from_submission(normalized_answers)
