@@ -84,7 +84,8 @@ def _setup_teacher_dashboard_case(client, app_module, competition_name="Teacher 
     with app_module.app.app_context():
         comp = app_module.Competition.query.filter_by(name=competition_name).first()
         student = app_module.User.query.filter_by(username="student").first()
-        app_module.db.session.add(app_module.CompetitionMember(competition_id=comp.id, user_id=student.id, cash_balance=100000))
+        student_id = student.id
+        app_module.db.session.add(app_module.CompetitionMember(competition_id=comp.id, user_id=student_id, cash_balance=100000))
         app_module.db.session.commit()
         curriculum = app_module.Curriculum.query.filter_by(competition_id=comp.id).first()
         first_module = app_module.CurriculumModule.query.filter_by(curriculum_id=curriculum.id, week_number=1).first()
@@ -258,7 +259,8 @@ def test_curriculum_grades_requires_auth_and_permissions(app_client):
     with app_module.app.app_context():
         comp = app_module.Competition.query.filter_by(name="Auth Check Cup").first()
         student = app_module.User.query.filter_by(username="student").first()
-        app_module.db.session.add(app_module.CompetitionMember(competition_id=comp.id, user_id=student.id, cash_balance=100000))
+        student_id = student.id
+        app_module.db.session.add(app_module.CompetitionMember(competition_id=comp.id, user_id=student_id, cash_balance=100000))
         app_module.db.session.commit()
         competition_id = comp.id
         student_id = student.id
@@ -1532,7 +1534,8 @@ def test_quiz_submission_returns_grade_summary_for_student_refresh(app_client):
     with app_module.app.app_context():
         comp = app_module.Competition.query.filter_by(name="Quiz Submit Grade Summary Cup").first()
         student = app_module.User.query.filter_by(username="student").first()
-        app_module.db.session.add(app_module.CompetitionMember(competition_id=comp.id, user_id=student.id, cash_balance=100000))
+        student_id = student.id
+        app_module.db.session.add(app_module.CompetitionMember(competition_id=comp.id, user_id=student_id, cash_balance=100000))
         app_module.db.session.commit()
         curriculum = app_module.Curriculum.query.filter_by(competition_id=comp.id).first()
         first_module = app_module.CurriculumModule.query.filter_by(curriculum_id=curriculum.id, week_number=1).first()
@@ -1546,7 +1549,10 @@ def test_quiz_submission_returns_grade_summary_for_student_refresh(app_client):
     assert submit_resp.status_code == 200
     payload = submit_resp.get_json()
     assert payload["status"] == "graded"
+    assert payload["user_id"] == student_id
     assert payload["gradeSummary"]
+    assert payload["gradeSummary"]["competition_id"] == comp.id
+    assert payload["gradeSummary"]["user_id"] == student_id
     assert payload["gradeSummary"]["completedItems"] >= 1
     assert payload["gradeSummary"]["progressPercentage"] > 0
 

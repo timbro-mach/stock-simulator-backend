@@ -977,8 +977,11 @@ def _compute_grade_summary(competition_id, user_id):
     }
     return {
         "curriculumId": curriculum.id,
+        "curriculum_id": curriculum.id,
         "competitionId": competition_id,
+        "competition_id": competition_id,
         "userId": user_id,
+        "user_id": user_id,
         "totalPointsEarned": round(total_scored, 2),
         "totalPointsPossible": round(total_possible, 2),
         "percentage": overall_pct,
@@ -2007,6 +2010,10 @@ def login():
 
                 competition_accounts.append({
                     "account_id": m.id,
+                    "competition_member_id": m.id,
+                    "competitionMemberId": m.id,
+                    "user_id": user.id,
+                    "userId": user.id,
                     "competition_id": comp.id,
                     "code": comp.code,
                     "competition_code": comp.code,
@@ -2293,6 +2300,10 @@ def get_user():
 
         competition_accounts.append({
             'account_id': m.id,
+            'competition_member_id': m.id,
+            'competitionMemberId': m.id,
+            'user_id': user.id,
+            'userId': user.id,
             'competition_id': comp.id,
             'code': comp.code,
             'competition_code': comp.code,
@@ -3033,6 +3044,7 @@ def curriculum_submit_assignment(assignment_id):
         "competitionId": curriculum.competition_id,
         "competition_id": curriculum.competition_id,
         "userId": user.id,
+        "user_id": user.id,
         "answers": submission.answers_json,
         "score": submission.score,
         "pointsEarned": submission.score,
