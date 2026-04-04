@@ -428,6 +428,7 @@ BASE_CURRICULUM_TOPICS = [
     ("Portfolio Construction", "Position sizing, rebalancing, and constraints management."),
     ("Market Events, Macroeconomics, and Review", "Rates, inflation, events, and integrated review."),
 ]
+CURRICULUM_CONTENT_VERSION = "2026.04"
 
 
 def _parse_iso_date(value, field_name):
@@ -665,6 +666,7 @@ def _lesson_content_for_module(module_title, module_description, week_number):
 
     return (
         f"## Week {week_number} eText: {module_title}\n\n"
+        f"_Curriculum content version: {CURRICULUM_CONTENT_VERSION}_\n\n"
         f"{module_description} {plan['hook']}\n\n"
         "You are not being graded on bold predictions; you are being graded on decision quality you can repeat. "
         "In this course, strong investing means a clear thesis, measurable evidence, and disciplined risk controls.\n\n"
@@ -2930,7 +2932,7 @@ def curriculum_generate(competition_id):
             total_weeks=total_weeks,
             start_date=_parse_iso_date(data.get("curriculumStartDate"), "curriculumStartDate"),
             end_date=_parse_iso_date(data.get("curriculumEndDate"), "curriculumEndDate"),
-            overwrite=bool(data.get("overwrite", False)),
+            overwrite=bool(data.get("overwrite", True)),
         )
         db.session.commit()
         return jsonify({"message": "Curriculum generated", "curriculumId": curriculum.id}), 201
