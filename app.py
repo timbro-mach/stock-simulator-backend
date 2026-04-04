@@ -428,6 +428,7 @@ BASE_CURRICULUM_TOPICS = [
     ("Portfolio Construction", "Position sizing, rebalancing, and constraints management."),
     ("Market Events, Macroeconomics, and Review", "Rates, inflation, events, and integrated review."),
 ]
+CURRICULUM_CONTENT_VERSION = "2026.04"
 
 
 def _parse_iso_date(value, field_name):
@@ -510,207 +511,148 @@ def _module_teaching_plan(module_title, module_description):
     lower_title = module_title.lower()
 
     plan = {
-        "hook": "Investing gets easier when you stop chasing tips and start building a repeatable decision process.",
+        "hook": "Investing improves when you replace hot takes with a repeatable process that survives different market regimes.",
         "quiz_focus": [
-            "Definitions used in context (not flashcard memorization)",
-            "How concepts change an actual portfolio decision",
-            "Tradeoffs between return, risk, cost, and diversification",
-            "Interpreting simple calculations and their practical meaning",
+            "Applying core terms to realistic portfolio decisions",
+            "Choosing the best action under risk, cost, and diversification tradeoffs",
+            "Interpreting basic return/allocation math in plain language",
+            "Diagnosing weak decision process vs strong decision process",
         ],
         "core_terms": [
-            ("Expected return", "Your best estimate of payoff, not a promise."),
-            ("Risk", "The range of outcomes you might get, including downside."),
-            ("Process", "A repeatable checklist that keeps you from emotional decisions."),
+            ("Expected return", "A probability-weighted estimate, not a guarantee."),
+            ("Risk", "The range and severity of outcomes, especially downside."),
+            ("Process", "A checklist-driven decision workflow that is repeatable under pressure."),
         ],
-        "likely_confusion": "Students often confuse a good outcome with a good decision. A lucky trade can still be poor process.",
-        "scenario": "You are deciding whether to add risk after a strong market week. The disciplined move is to check thesis, valuation, and position limits before clicking buy.",
+        "likely_confusion": "Students often grade themselves by outcome instead of process quality.",
+        "scenario": "After a strong week, you feel pressure to add risk. The disciplined move is to re-check thesis strength, valuation context, position limits, and downside scenario before placing a trade.",
         "walkthrough": [
-            "Write the thesis in one sentence.",
-            "Name the specific evidence that would confirm or invalidate it.",
-            "Choose position size based on conviction and downside risk.",
-            "Define an exit rule before entry.",
+            "State the thesis in one sentence with a clear time horizon.",
+            "List 2-3 concrete data points that support the thesis.",
+            "Define risk controls: sizing, invalidation trigger, and portfolio impact.",
+            "Document what evidence would make you reduce, exit, or add.",
         ],
         "assignment_q1": [
-            "Choose one simulator trade from this module and evaluate whether the decision quality was high, medium, or low. Defend your rating with at least three specific pieces of evidence from the eText framework (thesis clarity, risk control, sizing, or implementation quality).",
-            "Identify the biggest risk you accepted in that trade (market, sector, company, valuation, liquidity, or behavioral), then explain exactly how you managed it or how you should have managed it.",
-            "Propose one upgraded version of the trade you would place today and justify what changed in your analysis.",
+            "Select one real trade from this module and evaluate decision quality (high/medium/low) using at least four eText criteria: thesis clarity, evidence quality, sizing discipline, and risk controls.",
+            "Identify the single most material risk in that trade (market, sector, company, valuation, liquidity, or behavioral). Explain whether your controls were pre-planned, reactive, or missing—and the consequence of that choice.",
+            "Rewrite the trade as a higher-quality plan you would execute now: include updated thesis, position size, invalidation rule, and one trigger for scaling up/down.",
         ],
         "assignment_q2": [
-            "Compute your portfolio return over a defined window and compare it to a relevant benchmark ETF. Show formula, inputs, and result.",
-            "Break your portfolio into at least four sleeves (for example: core equity ETF, sector tilt, individual stock ideas, cash/defensive). Calculate each sleeve weight and interpret concentration risk.",
-            "Estimate contribution to return from your top two positions and explain whether your results came from skillful thesis selection, concentration luck, or broad market beta.",
+            "Compute your portfolio return for a clearly defined window and compare it to a relevant benchmark ETF. Show formula, inputs, and final excess return.",
+            "Break the portfolio into at least four sleeves (e.g., core beta, thematic tilt, single-name ideas, cash/defensive). Calculate each sleeve weight and evaluate concentration risk.",
+            "Estimate contribution to return from your top two positions and explain whether performance came mostly from thesis edge, factor exposure, or concentration luck.",
         ],
+        "application_prompt": "State one action you will apply in your next simulator decision and why it should improve process quality.",
     }
 
     if "introduction to investing" in lower_title or "markets" in lower_title:
         plan.update({
-            "hook": "Most beginners think investing is stock picking. In reality, the game starts with understanding market structure, incentives, and time horizon.",
+            "hook": "Most new investors over-focus on ticker selection. Real progress starts with objective, horizon, and implementation discipline.",
             "core_terms": [
-                ("Primary vs secondary market", "Primary raises capital; secondary transfers ownership among investors."),
-                ("Asset class", "A group of investments with similar risk/return behavior."),
-                ("Compounding", "Returns earning returns over time; the real engine of long-term wealth."),
+                ("Primary vs secondary market", "Primary issues raise capital; secondary markets transfer ownership."),
+                ("Asset class", "A bucket of exposures with similar risk/return behavior."),
+                ("Compounding", "Returns generating additional returns over long horizons."),
             ],
-            "likely_confusion": "Students mix up trading activity with investing progress. More clicks does not mean better results.",
-            "scenario": "A new investor buys random trending names and underperforms a simple market ETF. Your job is to diagnose why.",
-            "walkthrough": [
-                "Set objective: growth, income, capital preservation, or blend.",
-                "Match objective to time horizon and risk budget.",
-                "Select broad market exposure first, then add targeted ideas.",
-                "Track progress with benchmark-relative performance, not vibes.",
-            ],
+            "likely_confusion": "Students confuse activity with progress; more trades is not automatically better investing.",
+            "scenario": "A student rotates through trending names and trails a broad ETF. Your task is to diagnose why process failed.",
         })
     elif "risk and return" in lower_title:
         plan.update({
-            "hook": "Return is what you want. Risk is what you must survive to get it.",
+            "hook": "Return is attractive, but risk determines whether your process is durable.",
             "core_terms": [
-                ("Volatility", "How widely returns move around average."),
-                ("Drawdown", "Peak-to-trough loss; psychologically and financially expensive."),
-                ("Risk-adjusted return", "Return earned per unit of risk taken."),
+                ("Volatility", "The variability of returns around average."),
+                ("Drawdown", "Peak-to-trough decline that tests both capital and psychology."),
+                ("Risk-adjusted return", "Return evaluated relative to the risk required to earn it."),
             ],
-            "likely_confusion": "High past returns are often mistaken for low future risk. Usually the opposite can be true after big run-ups.",
-            "scenario": "Two portfolios return 10%. One had a -8% max drawdown, the other -28%. Which one deserves more confidence and why?",
-            "walkthrough": [
-                "Calculate simple return and downside metrics.",
-                "Compare total return to volatility and drawdown.",
-                "Judge whether reward justified the path taken.",
-                "Adjust sizing if downside pain is outside your risk budget.",
-            ],
+            "likely_confusion": "Strong trailing returns are often mistaken for low future risk after extended rallies.",
+            "scenario": "Two portfolios both return 10%, but one suffered a -28% drawdown and one only -8%. Decide which process is stronger and why.",
         })
     elif "diversification" in lower_title:
         plan.update({
-            "hook": "Diversification is not about owning many tickers. It is about owning different risk behaviors.",
+            "hook": "Diversification is about different risk behaviors, not just more ticker symbols.",
             "core_terms": [
-                ("Correlation", "How assets move together."),
-                ("Idiosyncratic risk", "Company-specific risk you can diversify away."),
-                ("Concentration", "Too much outcome dependence on one position, sector, or factor."),
+                ("Correlation", "How assets move relative to one another."),
+                ("Idiosyncratic risk", "Single-company risk that can be diversified away."),
+                ("Concentration", "Overdependence on one position, sector, or factor."),
             ],
-            "likely_confusion": "Owning 12 tech stocks is not diversified if they all fall for the same reason.",
-            "scenario": "Your portfolio has eight holdings, but 70% of risk comes from one growth factor exposure.",
-            "walkthrough": [
-                "Measure weights by position, sector, and factor style.",
-                "Find hidden concentration sources.",
-                "Add complementary exposures, not just more of the same.",
-                "Re-check total portfolio behavior in a stress scenario.",
-            ],
+            "likely_confusion": "Owning many names in one theme is still concentrated risk.",
+            "scenario": "Your portfolio holds eight names, but most risk is concentrated in one growth factor exposure.",
         })
     elif "asset allocation" in lower_title:
         plan.update({
-            "hook": "Asset allocation is your portfolio's operating system. Security selection is an app running on top of it.",
+            "hook": "Allocation is your portfolio operating system; security selection runs on top of it.",
             "core_terms": [
-                ("Strategic allocation", "Long-run target mix tied to goals and risk tolerance."),
-                ("Tactical tilt", "Short-term deviation based on valuation, momentum, or macro view."),
-                ("Rebalancing band", "Pre-set threshold for restoring target weights."),
+                ("Strategic allocation", "Long-term target mix linked to goals and risk tolerance."),
+                ("Tactical tilt", "Temporary deviation based on valuation, momentum, or macro evidence."),
+                ("Rebalancing band", "A pre-defined threshold for restoring target weights."),
             ],
-            "likely_confusion": "Students often change allocation because of headlines, not because their plan changed.",
-            "scenario": "After a rally, equities rise from 60% to 74% of your portfolio. Decide whether to rebalance and explain tradeoffs.",
-            "walkthrough": [
-                "Set strategic target mix.",
-                "Define tactical flexibility limits.",
-                "Apply a rules-based rebalance trigger.",
-                "Document why allocation still matches objective.",
-            ],
+            "likely_confusion": "Students often change allocation because of headlines, not because objective or risk capacity changed.",
+            "scenario": "After a rally, equities rise from 60% to 74% of your mix. Decide whether to rebalance and defend the tradeoff.",
         })
     elif "stocks, etfs, and funds" in lower_title:
         plan.update({
-            "hook": "Vehicle choice matters. The same market view can be implemented efficiently or expensively.",
+            "hook": "Implementation vehicle matters: the same idea can be expressed efficiently or expensively.",
             "core_terms": [
-                ("Expense ratio", "Annual fund cost that compounds against your returns."),
-                ("Bid-ask spread", "Execution cost hidden in trading price."),
-                ("Tracking difference", "Gap between fund return and index return after fees/frictions."),
+                ("Expense ratio", "Recurring annual cost that compounds against net returns."),
+                ("Bid-ask spread", "Execution friction paid when entering or exiting positions."),
+                ("Tracking difference", "Gap between fund return and benchmark return after costs/frictions."),
             ],
             "likely_confusion": "Low management fee alone does not guarantee low total implementation cost.",
-            "scenario": "You want AI exposure. Compare buying one volatile stock versus a broad technology ETF and justify the better fit.",
-            "walkthrough": [
-                "Define exposure goal.",
-                "Compare stock-specific and fund-based implementations.",
-                "Estimate recurring and execution costs.",
-                "Pick the vehicle that best matches conviction and risk budget.",
-            ],
+            "scenario": "You want AI exposure: compare concentrated single-name exposure versus diversified ETF implementation.",
         })
     elif "fundamental analysis" in lower_title:
         plan.update({
-            "hook": "Fundamental analysis asks a simple question: what is this business worth, and is the market mispricing it?",
+            "hook": "Fundamental analysis asks: what is this business worth, and where is the market likely mispricing it?",
             "core_terms": [
-                ("Revenue growth quality", "Growth that is durable and profitable beats one-time spikes."),
-                ("Margin structure", "Operating leverage can amplify upside and downside."),
+                ("Revenue quality", "Sustainable growth with sound unit economics beats one-time spikes."),
+                ("Margin structure", "Operating leverage can amplify both upside and downside."),
                 ("Valuation multiple", "Price paid relative to earnings, cash flow, or sales."),
             ],
-            "likely_confusion": "A great company is not always a great stock if the valuation already assumes perfection.",
-            "scenario": "Two firms show similar growth, but one has stronger cash conversion and lower debt. Determine which is investable and at what valuation discipline.",
-            "walkthrough": [
-                "Review business model and competitive edge.",
-                "Check financial statement quality signals.",
-                "Estimate fair value range.",
-                "Decide buy/hold/avoid based on margin of safety.",
-            ],
+            "likely_confusion": "Great businesses can still be poor investments when valuation assumptions are stretched.",
+            "scenario": "Two firms grow similarly, but one converts cash better with lower leverage. Determine investability and required margin of safety.",
         })
     elif "technical analysis" in lower_title:
         plan.update({
-            "hook": "Technical analysis is not fortune-telling; it is probability management using price behavior and participation.",
+            "hook": "Technical analysis is probability management using price, participation, and structure.",
             "core_terms": [
-                ("Trend", "Directional persistence over time."),
-                ("Support/resistance", "Price zones where supply-demand dynamics often shift."),
-                ("Momentum", "Strength of price movement; useful for timing, not thesis replacement."),
+                ("Trend", "Directional persistence across time horizons."),
+                ("Support/resistance", "Price zones where supply-demand balance often shifts."),
+                ("Momentum", "The strength and persistence of price movement."),
             ],
-            "likely_confusion": "Students often treat chart signals as certain. They are conditional probabilities, not guarantees.",
-            "scenario": "A stock breaks above resistance on high volume, then retests the breakout level. Decide whether to add, hold, or cut.",
-            "walkthrough": [
-                "Identify market structure (uptrend, range, downtrend).",
-                "Mark key support/resistance levels.",
-                "Use confirmation signals (volume, relative strength).",
-                "Set invalidation and position size before entry.",
-            ],
+            "likely_confusion": "Students treat chart setups as certainty instead of conditional probability.",
+            "scenario": "A stock breaks resistance on strong volume, then retests breakout level. Decide add/hold/exit using invalidation logic.",
         })
     elif "behavioral finance" in lower_title:
         plan.update({
-            "hook": "Your biggest portfolio risk may be your own decision patterns under stress.",
+            "hook": "Your decision habits under stress can dominate portfolio outcomes.",
             "core_terms": [
-                ("Loss aversion", "Pain from losses often drives irrational risk-taking or paralysis."),
-                ("Recency bias", "Overweighting recent outcomes when forecasting the future."),
-                ("Confirmation bias", "Seeking evidence that supports your prior view while ignoring disconfirming data."),
+                ("Loss aversion", "Loss pain can drive irrational risk-seeking or paralysis."),
+                ("Recency bias", "Overweighting recent outcomes in future expectations."),
+                ("Confirmation bias", "Filtering information to protect your prior view."),
             ],
-            "likely_confusion": "Students assume biases only affect beginners. In reality, experience can make overconfidence worse.",
-            "scenario": "You keep averaging down a losing position because you want to 'get back to even.' Diagnose the bias and redesign the process rule.",
-            "walkthrough": [
-                "Name the bias showing up in behavior.",
-                "Map the portfolio damage path if repeated.",
-                "Install a pre-commitment rule (size cap, stop, review checklist).",
-                "Track adherence, not just outcome.",
-            ],
+            "likely_confusion": "Biases do not disappear with experience; in many cases they become more subtle.",
+            "scenario": "You keep averaging down to 'get back to even.' Diagnose the bias and design a stronger pre-commitment rule.",
         })
     elif "portfolio construction" in lower_title:
         plan.update({
-            "hook": "Portfolio construction is where ideas meet constraints. Good ideas with bad sizing still fail.",
+            "hook": "Great ideas still fail if sizing and interaction risk are weak.",
             "core_terms": [
-                ("Position sizing", "How much to allocate to one idea based on conviction and risk."),
-                ("Risk budget", "Planned amount of uncertainty you are willing to absorb."),
-                ("Rebalancing", "Realigning weights to target exposures over time."),
+                ("Position sizing", "Capital allocation per idea based on conviction and downside."),
+                ("Risk budget", "How much uncertainty your plan can absorb."),
+                ("Rebalancing", "Systematic weight maintenance to control drift and concentration."),
             ],
-            "likely_confusion": "Students focus on entries but ignore how portfolio interactions change total risk.",
-            "scenario": "You have five strong ideas but only enough risk budget for two full-size positions and three starter positions.",
-            "walkthrough": [
-                "Rank ideas by expected edge and downside profile.",
-                "Allocate core vs satellite weights.",
-                "Stress-test correlated drawdown scenarios.",
-                "Create rebalance and de-risk triggers.",
-            ],
+            "likely_confusion": "Students optimize entry timing but ignore cross-position correlation and portfolio-level risk.",
+            "scenario": "You have five strong ideas but only enough risk budget for two full positions and three starter positions.",
         })
     elif "market events" in lower_title or "macroeconomics" in lower_title:
         plan.update({
-            "hook": "Macro does not predict every move, but it sets the weather your portfolio has to trade through.",
+            "hook": "Macro sets the environment your portfolio must survive, even when stock selection is strong.",
             "core_terms": [
-                ("Inflation regime", "High or low inflation environments favor different assets."),
-                ("Rate sensitivity", "How valuation and financing conditions respond to policy rates."),
-                ("Scenario planning", "Preparing playbooks for plausible macro paths."),
+                ("Inflation regime", "Different inflation environments reward different assets."),
+                ("Rate sensitivity", "How valuation and financing conditions react to interest-rate changes."),
+                ("Scenario planning", "Pre-defining responses across plausible macro paths."),
             ],
-            "likely_confusion": "Students either ignore macro entirely or let every headline force a portfolio overhaul.",
-            "scenario": "A surprise inflation print pushes yields higher. Evaluate which holdings are most exposed and how to respond without panic trading.",
-            "walkthrough": [
-                "Define base, upside, and downside macro scenarios.",
-                "Map holdings to each scenario's winners and losers.",
-                "Apply selective hedging or exposure adjustments.",
-                "Reassess only when evidence changes, not every headline.",
-            ],
+            "likely_confusion": "Students either ignore macro completely or overreact to every headline.",
+            "scenario": "A hot inflation print lifts yields quickly. Identify vulnerable holdings and response actions without panic-trading.",
         })
 
     return plan
@@ -724,33 +666,35 @@ def _lesson_content_for_module(module_title, module_description, week_number):
 
     return (
         f"## Week {week_number} eText: {module_title}\n\n"
+        f"_Curriculum content version: {CURRICULUM_CONTENT_VERSION}_\n\n"
         f"{module_description} {plan['hook']}\n\n"
-        "If you remember one thing from this week, remember this: investing skill comes from decision quality repeated over time. "
-        "That means clear logic, appropriate risk, and disciplined execution.\n\n"
+        "You are not being graded on bold predictions; you are being graded on decision quality you can repeat. "
+        "In this course, strong investing means a clear thesis, measurable evidence, and disciplined risk controls.\n\n"
         "### Core concepts you need to own\n"
         f"{terms_block}\n\n"
-        "### How this connects to your simulator decisions\n"
+        "### Why this matters in your simulator account\n"
         f"{plan['scenario']}\n\n"
-        "### Step-by-step decision process\n"
+        "### Step-by-step decision workflow\n"
         f"{walkthrough_block}\n\n"
-        "### Where students usually get tripped up\n"
-        f"{plan['likely_confusion']} Instead of reacting emotionally, force yourself to write the thesis, risk plan, and invalidation rule before placing the trade.\n\n"
-        "### Quick quantitative toolkit\n"
-        "Use these formulas every week so your assignments are evidence-based:\n"
+        "### Frequent mistake to avoid\n"
+        f"{plan['likely_confusion']} Write your thesis, size, and invalidation *before* execution so your process does not get rewritten by emotion.\n\n"
+        "### Quant toolkit (use in quiz + assignment)\n"
         "- **Holding period return:** (Ending Value - Beginning Value + Cash Flows) / Beginning Value\n"
         "- **Portfolio weight:** Position Market Value / Total Portfolio Value\n"
         "- **Contribution to return:** Position Weight × Position Return\n"
         "- **Excess return vs benchmark:** Portfolio Return - Benchmark Return\n"
-        "When you calculate a number, always interpret it in plain language: what did it mean for risk, and what should you do next?\n\n"
+        "- **Concentration check (Top-3 weight):** Sum of top 3 position weights\n"
+        "Every number needs interpretation: What does it imply for risk, and what action follows?\n\n"
         "### Quiz alignment map (20 points)\n"
-        "The quiz checks whether you can apply concepts in context. Expect questions on:\n"
+        "Expect decision-based multiple-choice questions on:\n"
         f"{quiz_focus_block}\n\n"
         "### Assignment alignment map (2 questions, 10 points each)\n"
-        "- **Question 1:** Deep qualitative analysis of one real trade decision, including thesis strength, risk controls, and process quality.\n"
-        "- **Question 2:** Quantitative analysis using return, allocation, and contribution math tied to your actual positions.\n\n"
+        "- **A1:** Deep qualitative trade critique using thesis, evidence, risk, and execution quality.\n"
+        "- **A2:** Quantitative portfolio analysis with return math, allocation breakdown, and contribution interpretation.\n\n"
         "### What an excellent submission looks like\n"
-        "An A-level response is specific, data-backed, and honest about tradeoffs. It does not hide behind vague claims like 'I felt bullish.' "
-        "It shows your numbers, explains your choices, and tells me what you would improve in your next decision."
+        "It is specific, evidence-driven, and self-critical. It includes calculations, states assumptions, explains tradeoffs, and closes with a clear process upgrade for your next trade.\n\n"
+        "### Exit ticket\n"
+        f"{plan['application_prompt']}"
     )
 
 
@@ -767,32 +711,104 @@ def _assignment_content_for_module(module_title):
 
     return {
         "instructions": (
-            f"Complete both 10-point questions for {module_title}. Use your simulator account as evidence: trades, weights, returns, and benchmark comparison. "
-            "Show your work for all calculations, explain assumptions, and connect conclusions to course concepts from this week's eText."
+            f"Complete both 10-point questions for {module_title}. Anchor every claim in simulator evidence (positions, timestamps, weights, returns, and benchmark context). "
+            "Show formulas and intermediate values for quantitative work, state assumptions explicitly, and connect conclusions to this module's eText concepts."
         ),
         "questions": [
             {
                 "id": "a1",
                 "kind": "qualitative",
                 "points": 10,
-                "prompt": "Question 1 (10 points) - Trade Thesis and Risk Analysis",
+                "prompt": "Question 1 (10 points) - Trade Decision Audit and Risk Control",
                 "sections": q1_sections,
             },
             {
                 "id": "a2",
                 "kind": "quantitative",
                 "points": 10,
-                "prompt": "Question 2 (10 points) - Portfolio Math and Decision Interpretation",
+                "prompt": "Question 2 (10 points) - Portfolio Analytics and Performance Attribution",
                 "sections": q2_sections,
             },
         ],
         "rubricHints": [
-            "Depth and accuracy of concept application",
-            "Strength of evidence from simulator data",
-            "Correctness and transparency of quantitative work",
-            "Quality of interpretation, tradeoff analysis, and writing clarity",
+            "Concept mastery and accurate use of module vocabulary",
+            "Specific evidence quality from simulator records",
+            "Correctness, transparency, and interpretation of quantitative work",
+            "Decision-quality insight: tradeoffs, risk control, and process improvement",
         ],
     }
+
+
+def _quiz_content_for_module(module_title, question_count=20):
+    plan = _module_teaching_plan(module_title, "")
+    term1, term2, _term3 = [term for term, _ in plan["core_terms"]]
+    stem_scenario = plan["scenario"]
+
+    bank = [
+        (f"Which statement best reflects this module's core mindset?", [
+            "Judge decisions by process quality and evidence, not just outcome.",
+            "Chase the highest recent return with full size.",
+            "Avoid benchmarks because they reduce confidence.",
+            "Rebuild your rules after each trade outcome.",
+        ], "Judge decisions by process quality and evidence, not just outcome."),
+        (f"In this module, {term1.lower()} is best defined as:", [
+            f"{term1} is a probability-based estimate rather than a certainty.",
+            f"{term1} is the same as last month's realized return.",
+            f"{term1} means ignoring downside to maximize upside.",
+            f"{term1} is only relevant for short-term traders.",
+        ], f"{term1} is a probability-based estimate rather than a certainty."),
+        (f"Why is documenting an invalidation rule before entry important?", [
+            "It prevents post-hoc rationalization and improves risk discipline.",
+            "It guarantees every trade will be profitable.",
+            "It removes the need for position sizing.",
+            "It replaces the need for a thesis.",
+        ], "It prevents post-hoc rationalization and improves risk discipline."),
+        ("If your portfolio returned 6% and benchmark returned 4%, excess return is:", ["2%", "10%", "-2%", "4%"], "2%"),
+        ("Contribution to return is best interpreted as:", [
+            "How much each position added/subtracted to total portfolio return.",
+            "The number of trades placed during the week.",
+            "Only the return of your largest holding.",
+            "A measure that ignores position weights.",
+        ], "How much each position added/subtracted to total portfolio return."),
+        (f"What is the strongest reason to monitor {term2.lower()} proactively?", [
+            f"Because {term2.lower()} determines whether your strategy can survive adverse paths.",
+            f"Because {term2.lower()} only matters after the semester ends.",
+            f"Because {term2.lower()} can be ignored when conviction is high.",
+            f"Because {term2.lower()} is identical across all assets.",
+        ], f"Because {term2.lower()} determines whether your strategy can survive adverse paths."),
+        ("A portfolio has top-3 weights of 18%, 16%, and 11%. Top-3 concentration is:", ["45%", "29%", "18%", "11%"], "45%"),
+        ("Which response best demonstrates high-quality trade review?", [
+            "Compare thesis vs outcome, identify process gaps, and define one concrete upgrade.",
+            "Focus only on P&L and skip risk analysis.",
+            "Blame market noise for all underperformance.",
+            "Double size after any winning trade.",
+        ], "Compare thesis vs outcome, identify process gaps, and define one concrete upgrade."),
+        ("Which is the best benchmark selection principle?", [
+            "Use a benchmark aligned to your portfolio's primary exposure.",
+            "Always use cash as the benchmark.",
+            "Use the highest returning ETF each week.",
+            "Never use benchmarks for concentrated portfolios.",
+        ], "Use a benchmark aligned to your portfolio's primary exposure."),
+        (f"{stem_scenario} What is the most disciplined first action?", [
+            "Re-check thesis evidence and position limits before increasing risk.",
+            "Increase every position equally to avoid regret.",
+            "Ignore valuation and focus only on momentum.",
+            "Wait for social confirmation before deciding.",
+        ], "Re-check thesis evidence and position limits before increasing risk."),
+    ]
+
+    questions = []
+    answer_key = {}
+    for idx in range(question_count):
+        stem, choices, correct = bank[idx % len(bank)]
+        qid = f"q{idx + 1}"
+        questions.append({"id": qid, "prompt": stem, "choices": choices})
+        answer_key[qid] = correct
+
+    return {
+        "instructions": f"{module_title} quiz. Select one best answer for each question based on this week's eText and assignment expectations.",
+        "questions": questions,
+    }, {"questions": answer_key}
 
 
 def _final_exam_content(topics, question_count=20):
@@ -2916,7 +2932,7 @@ def curriculum_generate(competition_id):
             total_weeks=total_weeks,
             start_date=_parse_iso_date(data.get("curriculumStartDate"), "curriculumStartDate"),
             end_date=_parse_iso_date(data.get("curriculumEndDate"), "curriculumEndDate"),
-            overwrite=bool(data.get("overwrite", False)),
+            overwrite=bool(data.get("overwrite", True)),
         )
         db.session.commit()
         return jsonify({"message": "Curriculum generated", "curriculumId": curriculum.id}), 201
