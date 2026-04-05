@@ -429,6 +429,223 @@ BASE_CURRICULUM_TOPICS = [
     ("Market Events, Macroeconomics, and Review", "Rates, inflation, events, and integrated review."),
 ]
 CURRICULUM_CONTENT_VERSION = "2026.04"
+MODULE_1_CUSTOM_ETEXT = """## Module 1: Introduction to Investing & Markets
+### How the Game Actually Works
+
+### Start Here: Investing Is a Decision Process
+Most people think investing is about picking stocks.
+
+It's not.
+
+Investing is a process. And if you get the process right, your results tend to follow.
+
+That process looks like this:
+- **Allocation** – How do you divide your money across asset classes?
+- **Diversification** – How do you spread risk within those allocations?
+- **Position Sizing** – How much do you put into each investment?
+- **Implementation** – How do you actually execute (costs, timing, discipline)?
+
+You will see these ideas over and over again—in this course and in your portfolio.
+
+### Market Structure: Where Trades Actually Happen
+When you invest, you're operating in the secondary market—where investors trade with each other.
+
+Most trades happen through exchanges like:
+- New York Stock Exchange
+- NASDAQ
+
+Or through market makers who provide liquidity.
+
+### Why Liquidity Matters (This Shows Up on the Quiz)
+Every trade has a bid and ask:
+- **Bid** = what buyers will pay
+- **Ask** = what sellers want
+- **Spread** = the difference
+
+If an asset has low liquidity (not many buyers/sellers):
+- Spreads widen
+- Costs increase
+- Execution gets worse
+
+This is called **liquidity risk**.
+
+Key idea: Thin trading volume can increase your costs—even if the investment idea is good.
+
+### Asset Classes: Your Building Blocks
+A portfolio isn't just one investment—it's a combination.
+
+- **Stocks (Growth Engine)**  
+  High return potential, high volatility
+- **Bonds (Stability + Income)**  
+  Lower returns, lower volatility
+- **Cash (Flexibility)**  
+  Low return, low risk, and opportunity to deploy later
+
+### Asset Allocation: The Big Lever
+Asset allocation is the primary driver of long-run portfolio behavior.
+
+Not stock picking. Not timing.
+
+How you split between stocks, bonds, cash, and other assets determines most of your outcome.
+
+### Diversification: Reduce Risk Without Guessing
+Diversification means spreading your investments across different assets.
+
+The goal: reduce unsystematic risk without needing to time the market.
+
+Unsystematic risk = company-specific risk (example: one stock crashing).
+
+Diversification doesn't eliminate all risk—but it prevents one bad decision from wrecking your portfolio.
+
+### Position Sizing: Protect Yourself From Being Wrong
+You will be wrong sometimes. Everyone is.
+
+The question is: how much does it hurt?
+
+Position sizing limits the damage from any single incorrect thesis.
+
+Example:
+- 50% in one stock → dangerous
+- 5% in one stock → manageable
+
+This is one of the simplest—and most powerful—risk controls.
+
+### Risk-Adjusted Return: Smarter Than Just "Return"
+Not all returns are equal.
+
+If two portfolios both return 8%:
+- One is stable
+- One swings wildly
+
+Which is better? The stable one.
+
+That's risk-adjusted return: it compares return relative to the risk taken to achieve it.
+
+### Costs Matter More Than You Think
+One of the easiest mistakes to overlook: fees.
+
+With ETFs and funds, this shows up as an expense ratio.
+
+Lower recurring costs can materially improve long-run compounding.
+
+Small percentages don't look like much—but over time, they compound against you.
+
+### Rebalancing: Staying on Track
+Over time, your portfolio drifts.
+- Winners grow
+- Losers shrink
+
+Rebalancing means adjusting back to your target weights.
+
+It restores target allocation and enforces buy-low / sell-high behavior.
+
+Without rebalancing, your portfolio slowly becomes something you didn't intend.
+
+### Valuation Discipline: Don't Overpay
+Great companies are not always great investments—if you pay too much.
+
+Valuation discipline helps you avoid overpaying for growth expectations.
+
+This is where a lot of investors get into trouble:
+- Chasing hot stocks
+- Buying after big runs
+
+Price matters.
+
+### Behavioral Bias: Your Biggest Risk
+Markets don't just move—people react.
+
+One of the most common mistakes: recency bias.
+- Assuming recent performance will continue
+- Chasing what just went up
+
+Recency bias leads to performance-chasing decisions.
+
+This is how investors end up buying high and selling low.
+
+### Drawdown Management: The Math of Losing
+A key concept most people miss: losses hurt more than gains help.
+
+Down 50% → need +100% to recover.
+
+That's why smaller drawdowns improve your probability of recovery.
+
+Managing downside risk is just as important as generating returns.
+
+### Connecting This to Your Simulator
+As you start investing in the simulator, think in this framework:
+- What is my asset allocation?
+- Am I actually diversified?
+- Are my position sizes reasonable?
+- What risks am I taking?
+- Am I controlling costs and execution?
+
+You're not just placing trades.
+
+You're building a portfolio using a process.
+
+### Bottom Line (Memorize This Section)
+If you understand these ideas, you will do well on the quiz—and more importantly, as an investor:
+- Diversification reduces unnecessary risk
+- Asset allocation drives long-term outcomes
+- Position sizing controls damage when wrong
+- Risk-adjusted return matters more than raw return
+- Costs compound (and hurt if ignored)
+- Rebalancing enforces discipline
+- Liquidity affects execution
+- Behavior often matters more than knowledge
+- Managing drawdowns is critical
+"""
+MODULE_1_ASSIGNMENT_CONTENT = {
+    "instructions": (
+        "Week 1 Assignment (20 pts) — Getting Started in the Simulator. "
+        "Complete both parts and show your thinking with clear math and concise explanations."
+    ),
+    "questions": [
+        {
+            "id": "a1",
+            "kind": "quantitative",
+            "points": 10,
+            "prompt": "Part 1: First Trades (Quantitative – 10 pts)",
+            "sections": [
+                {"id": "a", "instruction": "Place the following trades in the simulator: $10,000 in SPY, $10,000 in BIL, and $5,000 in QQQ."},
+                {"id": "b", "instruction": "What was your cost basis for each position?"},
+                {"id": "c", "instruction": "What percentage of your portfolio does each position represent? Show your math."},
+            ],
+        },
+        {
+            "id": "a2",
+            "kind": "qualitative",
+            "points": 10,
+            "prompt": "Part 2: Add 2 Stocks (Qualitative – 10 pts)",
+            "sections": [
+                {"id": "a", "instruction": "Add at least 2 individual stocks to your portfolio."},
+                {"id": "b", "instruction": "In 1–2 paragraphs, explain what stocks you chose and why."},
+                {"id": "c", "instruction": "Explain what changed in your portfolio after adding them (risk, diversification, concentration, etc.) and how this felt compared to just holding ETFs."},
+                {"id": "d", "instruction": "You do not need to be right—show your thinking and decision process."},
+            ],
+        },
+    ],
+    "rubricHints": [
+        "Accuracy and transparency of cost basis and weight calculations",
+        "Clear explanation of portfolio impact (risk, diversification, concentration)",
+        "Evidence of simulator engagement and execution",
+        "Thoughtful reflection on decision-making process",
+    ],
+    "goalOfThisAssignment": [
+        "Learning how the simulator works",
+        "Starting to think like an investor",
+        "Getting comfortable placing trades",
+    ],
+}
+
+
+def _is_module_one_introduction(module_title, week_number=None):
+    normalized = (module_title or "").lower()
+    title_matches = "introduction to investing" in normalized
+    if week_number is None:
+        return title_matches
+    return week_number == 1 and title_matches
 
 
 def _parse_iso_date(value, field_name):
@@ -659,6 +876,9 @@ def _module_teaching_plan(module_title, module_description):
 
 
 def _lesson_content_for_module(module_title, module_description, week_number):
+    if _is_module_one_introduction(module_title, week_number):
+        return MODULE_1_CUSTOM_ETEXT
+
     plan = _module_teaching_plan(module_title, module_description)
     terms_block = "\n".join([f"- **{term}:** {meaning}" for term, meaning in plan["core_terms"]])
     walkthrough_block = "\n".join([f"{idx}. {step}" for idx, step in enumerate(plan["walkthrough"], start=1)])
@@ -699,6 +919,9 @@ def _lesson_content_for_module(module_title, module_description, week_number):
 
 
 def _assignment_content_for_module(module_title):
+    if _is_module_one_introduction(module_title):
+        return MODULE_1_ASSIGNMENT_CONTENT
+
     plan = _module_teaching_plan(module_title, "")
     q1_sections = [
         {"id": chr(97 + i), "instruction": instruction}
@@ -924,6 +1147,28 @@ def _delete_curriculum_for_competition(competition_id):
         ).delete(synchronize_session=False)
     CurriculumModule.query.filter_by(curriculum_id=curriculum.id).delete(synchronize_session=False)
     db.session.delete(curriculum)
+
+
+def _sync_module_one_curriculum_content(curriculum):
+    if not curriculum:
+        return False
+    module = CurriculumModule.query.filter_by(curriculum_id=curriculum.id, week_number=1).first()
+    if not module or not _is_module_one_introduction(module.title, module.week_number):
+        return False
+
+    updated = False
+    if (module.lesson_content or "").strip() != MODULE_1_CUSTOM_ETEXT.strip():
+        module.lesson_content = MODULE_1_CUSTOM_ETEXT
+        updated = True
+
+    assignment = CurriculumAssignment.query.filter_by(module_id=module.id, type="assignment").first()
+    if assignment and assignment.content_json != MODULE_1_ASSIGNMENT_CONTENT:
+        assignment.content_json = MODULE_1_ASSIGNMENT_CONTENT
+        updated = True
+
+    if updated:
+        db.session.flush()
+    return updated
 
 
 def _is_competition_instructor(user, competition):
@@ -2972,6 +3217,8 @@ def curriculum_modules(competition_id):
     curriculum = Curriculum.query.filter_by(competition_id=resolved_competition_id, enabled=True).first()
     if not curriculum:
         return jsonify({"message": "Curriculum not enabled for this competition"}), 404
+    if _sync_module_one_curriculum_content(curriculum):
+        db.session.commit()
     modules = CurriculumModule.query.filter_by(curriculum_id=curriculum.id).order_by(CurriculumModule.week_number.asc()).all()
     payload = []
     for module in modules:
