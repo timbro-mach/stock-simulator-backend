@@ -14,6 +14,8 @@ import pytz
 import os
 import hashlib
 import msal
+import html
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -866,6 +868,67 @@ def _lesson_content_for_module(module_title, module_description, week_number):
         "### Exit ticket\n"
         f"{plan['application_prompt']}"
     )
+
+
+def _render_inline_markdown_to_html(text):
+    escaped = html.escape(str(text))
+    return re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", escaped)
+
+
+def _lesson_content_html(lesson_content):
+    if not lesson_content:
+        return ""
+
+    lines = str(lesson_content).splitlines()
+    html_parts = []
+    paragraph_buffer = []
+    list_items = []
+
+    def flush_paragraph():
+        if not paragraph_buffer:
+            return
+        text = " ".join(paragraph_buffer).strip()
+        if text:
+            html_parts.append(f"<p>{_render_inline_markdown_to_html(text)}</p>")
+        paragraph_buffer.clear()
+
+    def flush_list():
+        if not list_items:
+            return
+        html_parts.append("<ul>")
+        for item in list_items:
+            html_parts.append(f"<li>{_render_inline_markdown_to_html(item)}</li>")
+        html_parts.append("</ul>")
+        list_items.clear()
+
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line:
+            flush_paragraph()
+            flush_list()
+            continue
+
+        heading_match = re.match(r"^(#{1,6})\s+(.*)$", line)
+        if heading_match:
+            flush_paragraph()
+            flush_list()
+            level = len(heading_match.group(1))
+            heading_text = heading_match.group(2).strip()
+            html_parts.append(f"<h{level}>{_render_inline_markdown_to_html(heading_text)}</h{level}>")
+            continue
+
+        bullet_match = re.match(r"^-\s+(.*)$", line)
+        if bullet_match:
+            flush_paragraph()
+            list_items.append(bullet_match.group(1).strip())
+            continue
+
+        flush_list()
+        paragraph_buffer.append(line)
+
+    flush_paragraph()
+    flush_list()
+    return "\n".join(html_parts)
 
 
 def _assignment_content_for_module(module_title):
@@ -3153,6 +3216,8 @@ def curriculum_modules(competition_id):
             "description": module.description,
             "lessonContent": module.lesson_content,
             "lesson_content": module.lesson_content,
+            "lessonContentHtml": _lesson_content_html(module.lesson_content),
+            "lesson_content_html": _lesson_content_html(module.lesson_content),
             "unlockDate": module.unlock_date.isoformat(),
             "dueDate": module.due_date.isoformat(),
             "assignments": [{
