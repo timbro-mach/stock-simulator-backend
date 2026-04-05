@@ -596,6 +596,56 @@ If you understand these ideas, you will do well on the quiz—and more important
 - Behavior often matters more than knowledge
 - Managing drawdowns is critical
 """
+MODULE_1_ASSIGNMENT_CONTENT = {
+    "instructions": (
+        "Week 1 Assignment (20 pts) — Getting Started in the Simulator. "
+        "Complete both parts and show your thinking with clear math and concise explanations."
+    ),
+    "questions": [
+        {
+            "id": "a1",
+            "kind": "quantitative",
+            "points": 10,
+            "prompt": "Part 1: First Trades (Quantitative – 10 pts)",
+            "sections": [
+                {"id": "a", "instruction": "Place the following trades in the simulator: $10,000 in SPY, $10,000 in BIL, and $5,000 in QQQ."},
+                {"id": "b", "instruction": "What was your cost basis for each position?"},
+                {"id": "c", "instruction": "What percentage of your portfolio does each position represent? Show your math."},
+            ],
+        },
+        {
+            "id": "a2",
+            "kind": "qualitative",
+            "points": 10,
+            "prompt": "Part 2: Add 2 Stocks (Qualitative – 10 pts)",
+            "sections": [
+                {"id": "a", "instruction": "Add at least 2 individual stocks to your portfolio."},
+                {"id": "b", "instruction": "In 1–2 paragraphs, explain what stocks you chose and why."},
+                {"id": "c", "instruction": "Explain what changed in your portfolio after adding them (risk, diversification, concentration, etc.) and how this felt compared to just holding ETFs."},
+                {"id": "d", "instruction": "You do not need to be right—show your thinking and decision process."},
+            ],
+        },
+    ],
+    "rubricHints": [
+        "Accuracy and transparency of cost basis and weight calculations",
+        "Clear explanation of portfolio impact (risk, diversification, concentration)",
+        "Evidence of simulator engagement and execution",
+        "Thoughtful reflection on decision-making process",
+    ],
+    "goalOfThisAssignment": [
+        "Learning how the simulator works",
+        "Starting to think like an investor",
+        "Getting comfortable placing trades",
+    ],
+}
+
+
+def _is_module_one_introduction(module_title, week_number=None):
+    normalized = (module_title or "").lower()
+    title_matches = "introduction to investing" in normalized
+    if week_number is None:
+        return title_matches
+    return week_number == 1 and title_matches
 
 
 def _parse_iso_date(value, field_name):
@@ -826,7 +876,7 @@ def _module_teaching_plan(module_title, module_description):
 
 
 def _lesson_content_for_module(module_title, module_description, week_number):
-    if week_number == 1 and module_title.lower().startswith("introduction to investing"):
+    if _is_module_one_introduction(module_title, week_number):
         return MODULE_1_CUSTOM_ETEXT
 
     plan = _module_teaching_plan(module_title, module_description)
@@ -869,6 +919,9 @@ def _lesson_content_for_module(module_title, module_description, week_number):
 
 
 def _assignment_content_for_module(module_title):
+    if _is_module_one_introduction(module_title):
+        return MODULE_1_ASSIGNMENT_CONTENT
+
     plan = _module_teaching_plan(module_title, "")
     q1_sections = [
         {"id": chr(97 + i), "instruction": instruction}
@@ -1094,6 +1147,28 @@ def _delete_curriculum_for_competition(competition_id):
         ).delete(synchronize_session=False)
     CurriculumModule.query.filter_by(curriculum_id=curriculum.id).delete(synchronize_session=False)
     db.session.delete(curriculum)
+
+
+def _sync_module_one_curriculum_content(curriculum):
+    if not curriculum:
+        return False
+    module = CurriculumModule.query.filter_by(curriculum_id=curriculum.id, week_number=1).first()
+    if not module or not _is_module_one_introduction(module.title, module.week_number):
+        return False
+
+    updated = False
+    if (module.lesson_content or "").strip() != MODULE_1_CUSTOM_ETEXT.strip():
+        module.lesson_content = MODULE_1_CUSTOM_ETEXT
+        updated = True
+
+    assignment = CurriculumAssignment.query.filter_by(module_id=module.id, type="assignment").first()
+    if assignment and assignment.content_json != MODULE_1_ASSIGNMENT_CONTENT:
+        assignment.content_json = MODULE_1_ASSIGNMENT_CONTENT
+        updated = True
+
+    if updated:
+        db.session.flush()
+    return updated
 
 
 def _is_competition_instructor(user, competition):
@@ -3142,6 +3217,8 @@ def curriculum_modules(competition_id):
     curriculum = Curriculum.query.filter_by(competition_id=resolved_competition_id, enabled=True).first()
     if not curriculum:
         return jsonify({"message": "Curriculum not enabled for this competition"}), 404
+    if _sync_module_one_curriculum_content(curriculum):
+        db.session.commit()
     modules = CurriculumModule.query.filter_by(curriculum_id=curriculum.id).order_by(CurriculumModule.week_number.asc()).all()
     payload = []
     for module in modules:

@@ -482,6 +482,41 @@ def test_curriculum_modules_include_lesson_content_and_rich_assignments(app_clie
     written = next(a for a in first_module["assignments"] if a["type"] == "assignment")
     assert len(written["content"]["questions"]) == 2
     assert all(len(q["sections"]) >= 3 for q in written["content"]["questions"])
+    assert written["content"]["questions"][0]["prompt"] == "Part 1: First Trades (Quantitative – 10 pts)"
+    assert "SPY" in written["content"]["questions"][0]["sections"][0]["instruction"]
+    assert written["content"]["questions"][1]["prompt"] == "Part 2: Add 2 Stocks (Qualitative – 10 pts)"
+
+
+def test_curriculum_modules_endpoint_backfills_module_one_content(app_client):
+    client, app_module = app_client
+    create_user(app_module, username="teacher", email="teacher@example.com")
+
+    resp = _create_competition(client, {
+        "username": "teacher",
+        "competition_name": "Module One Backfill Cup",
+        "curriculumEnabled": True,
+        "curriculumWeeks": 3,
+        "curriculumStartDate": "2026-01-01",
+        "curriculumEndDate": "2026-01-25",
+    })
+    assert resp.status_code == 200
+
+    with app_module.app.app_context():
+        comp = app_module.Competition.query.filter_by(name="Module One Backfill Cup").first()
+        curriculum = app_module.Curriculum.query.filter_by(competition_id=comp.id).first()
+        module = app_module.CurriculumModule.query.filter_by(curriculum_id=curriculum.id, week_number=1).first()
+        module.lesson_content = "OLD MODULE 1 CONTENT"
+        assignment = app_module.CurriculumAssignment.query.filter_by(module_id=module.id, type="assignment").first()
+        assignment.content_json = {"instructions": "old"}
+        app_module.db.session.commit()
+        competition_id = comp.id
+
+    modules_resp = client.get(f"/curriculum/competition/{competition_id}/modules")
+    assert modules_resp.status_code == 200
+    module_payload = modules_resp.get_json()[0]
+    assert "How the Game Actually Works" in module_payload["lessonContent"]
+    written = next(a for a in module_payload["assignments"] if a["type"] == "assignment")
+    assert written["content"]["questions"][0]["prompt"] == "Part 1: First Trades (Quantitative – 10 pts)"
 
 
 def test_instructor_can_list_submissions_and_manually_grade(app_client):
