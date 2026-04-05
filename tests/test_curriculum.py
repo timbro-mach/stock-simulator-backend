@@ -476,6 +476,11 @@ def test_curriculum_modules_include_lesson_content_and_rich_assignments(app_clie
     assert len(first_module["lessonContent"]) > 300
     assert "How the Game Actually Works" in first_module["lessonContent"]
     assert "Diversification reduces unnecessary risk" in first_module["lessonContent"]
+    assert first_module["lessonContentHtml"]
+    assert "<h2>Module 1: Introduction to Investing &amp; Markets</h2>" in first_module["lessonContentHtml"]
+    assert "<h3>How the Game Actually Works</h3>" in first_module["lessonContentHtml"]
+    assert "<strong>Allocation</strong>" in first_module["lessonContentHtml"]
+    assert "<ul>" in first_module["lessonContentHtml"]
     quiz = next(a for a in first_module["assignments"] if a["type"] == "quiz")
     assert len(quiz["content"]["questions"]) == 20
     assert len(quiz["answer_key_json"]["questions"]) == 20
