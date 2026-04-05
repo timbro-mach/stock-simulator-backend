@@ -474,6 +474,8 @@ def test_curriculum_modules_include_lesson_content_and_rich_assignments(app_clie
     first_module = modules[0]
     assert first_module["lessonContent"]
     assert len(first_module["lessonContent"]) > 300
+    assert "How the Game Actually Works" in first_module["lessonContent"]
+    assert "Diversification reduces unnecessary risk" in first_module["lessonContent"]
     quiz = next(a for a in first_module["assignments"] if a["type"] == "quiz")
     assert len(quiz["content"]["questions"]) == 20
     assert len(quiz["answer_key_json"]["questions"]) == 20
