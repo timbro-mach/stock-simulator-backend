@@ -932,6 +932,70 @@ def _lesson_content_html(lesson_content):
 
 
 def _assignment_content_for_module(module_title):
+    if module_title == "Week 1: Introduction to Investing and Markets":
+        return {
+            "instructions": (
+                "Week 1 Assignment (20 pts)\n\n"
+                "Getting Started in the Simulator"
+            ),
+            "questions": [
+                {
+                    "id": "a1",
+                    "kind": "quantitative",
+                    "points": 10,
+                    "prompt": (
+                        "Part 1: First Trades (Quantitative – 10 pts)\n\n"
+                        "Place the following trades in the simulator:\n"
+                        "- $10,000 in SPY\n"
+                        "- $10,000 in BIL\n"
+                        "- $5,000 in QQQ\n\n"
+                        "Then answer:\n"
+                        "- What was your cost basis for each position?\n"
+                        "- What percentage of your portfolio does each position represent?\n\n"
+                        "(Show your math.)"
+                    ),
+                    "sections": [
+                        {"id": "a", "instruction": "Place the following trades in the simulator:"},
+                        {"id": "b", "instruction": "$10,000 in SPY"},
+                        {"id": "c", "instruction": "$10,000 in BIL"},
+                        {"id": "d", "instruction": "$5,000 in QQQ"},
+                        {"id": "e", "instruction": "Then answer:"},
+                        {"id": "f", "instruction": "What was your cost basis for each position?"},
+                        {"id": "g", "instruction": "What percentage of your portfolio does each position represent?"},
+                        {"id": "h", "instruction": "(Show your math.)"},
+                    ],
+                },
+                {
+                    "id": "a2",
+                    "kind": "qualitative",
+                    "points": 10,
+                    "prompt": (
+                        "Part 2: Add 2 Stocks (Qualitative – 10 pts)\n\n"
+                        "Now add at least 2 individual stocks to your portfolio.\n\n"
+                        "In 1–2 paragraphs, explain:\n"
+                        "- What stocks you chose and why\n"
+                        "- What changed in your portfolio after adding them (risk, diversification, concentration, etc.)\n"
+                        "- How this felt compared to just holding ETFs\n\n"
+                        "You don’t need to be “right”—just show your thinking."
+                    ),
+                    "sections": [
+                        {"id": "a", "instruction": "Now add at least 2 individual stocks to your portfolio."},
+                        {"id": "b", "instruction": "In 1–2 paragraphs, explain:"},
+                        {"id": "c", "instruction": "What stocks you chose and why"},
+                        {"id": "d", "instruction": "What changed in your portfolio after adding them (risk, diversification, concentration, etc.)"},
+                        {"id": "e", "instruction": "How this felt compared to just holding ETFs"},
+                        {"id": "f", "instruction": "You don’t need to be “right”—just show your thinking."},
+                    ],
+                },
+            ],
+            "rubricHints": [
+                "Accurate calculations for cost basis and portfolio weights",
+                "Clear quantitative work with formulas and intermediate values",
+                "Thoughtful explanation of stock selection and portfolio changes",
+                "Reflection quality: risk, diversification, and decision process",
+            ],
+        }
+
     plan = _module_teaching_plan(module_title, "")
     q1_sections = [
         {"id": chr(97 + i), "instruction": instruction}
