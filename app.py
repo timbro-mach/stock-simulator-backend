@@ -943,7 +943,17 @@ def _assignment_content_for_module(module_title):
                     "id": "a1",
                     "kind": "quantitative",
                     "points": 10,
-                    "prompt": "Part 1: First Trades (Quantitative – 10 pts)",
+                    "prompt": (
+                        "Part 1: First Trades (Quantitative – 10 pts)\n\n"
+                        "Place the following trades in the simulator:\n"
+                        "- $10,000 in SPY\n"
+                        "- $10,000 in BIL\n"
+                        "- $5,000 in QQQ\n\n"
+                        "Then answer:\n"
+                        "- What was your cost basis for each position?\n"
+                        "- What percentage of your portfolio does each position represent?\n\n"
+                        "(Show your math.)"
+                    ),
                     "sections": [
                         {"id": "a", "instruction": "Place the following trades in the simulator:"},
                         {"id": "b", "instruction": "$10,000 in SPY"},
@@ -959,7 +969,15 @@ def _assignment_content_for_module(module_title):
                     "id": "a2",
                     "kind": "qualitative",
                     "points": 10,
-                    "prompt": "Part 2: Add 2 Stocks (Qualitative – 10 pts)",
+                    "prompt": (
+                        "Part 2: Add 2 Stocks (Qualitative – 10 pts)\n\n"
+                        "Now add at least 2 individual stocks to your portfolio.\n\n"
+                        "In 1–2 paragraphs, explain:\n"
+                        "- What stocks you chose and why\n"
+                        "- What changed in your portfolio after adding them (risk, diversification, concentration, etc.)\n"
+                        "- How this felt compared to just holding ETFs\n\n"
+                        "You don’t need to be “right”—just show your thinking."
+                    ),
                     "sections": [
                         {"id": "a", "instruction": "Now add at least 2 individual stocks to your portfolio."},
                         {"id": "b", "instruction": "In 1–2 paragraphs, explain:"},
