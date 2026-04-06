@@ -1018,6 +1018,34 @@ def _assignment_content_for_module(module_title):
     }
 
 
+def _expand_legacy_assignment_content(module_title, assignment_type, content_json):
+    assignment_kind = (assignment_type or "").lower()
+    if assignment_kind not in ("assignment", "written_assignment"):
+        return content_json
+
+    if not isinstance(content_json, dict):
+        return content_json
+
+    questions = content_json.get("questions")
+    if not isinstance(questions, list) or len(questions) != 2:
+        return content_json
+
+    has_sections = all(isinstance(q, dict) and isinstance(q.get("sections"), list) and len(q.get("sections")) > 0 for q in questions)
+    if has_sections:
+        return content_json
+
+    prompts = [str((q or {}).get("prompt", "")).strip().lower() for q in questions if isinstance(q, dict)]
+    looks_like_week1_legacy = (
+        len(prompts) == 2
+        and "first trades" in prompts[0]
+        and "add 2 stocks" in prompts[1]
+    )
+    if not looks_like_week1_legacy:
+        return content_json
+
+    return _assignment_content_for_module(module_title)
+
+
 def _quiz_content_for_module(module_title, question_count=20):
     plan = _module_teaching_plan(module_title, "")
     term1, term2, _term3 = [term for term, _ in plan["core_terms"]]
@@ -3253,8 +3281,14 @@ def curriculum_modules(competition_id):
         return jsonify({"message": "Curriculum not enabled for this competition"}), 404
     modules = CurriculumModule.query.filter_by(curriculum_id=curriculum.id).order_by(CurriculumModule.week_number.asc()).all()
     payload = []
+    did_update_legacy_content = False
     for module in modules:
         assignments = CurriculumAssignment.query.filter_by(module_id=module.id).all()
+        for assignment in assignments:
+            upgraded_content = _expand_legacy_assignment_content(module.title, assignment.type, assignment.content_json)
+            if upgraded_content is not assignment.content_json:
+                assignment.content_json = upgraded_content
+                did_update_legacy_content = True
         payload.append({
             "moduleId": module.id,
             "weekNumber": module.week_number,
@@ -3276,6 +3310,8 @@ def curriculum_modules(competition_id):
                 "answer_key_json": a.answer_key_json,
             } for a in assignments]
         })
+    if did_update_legacy_content:
+        db.session.commit()
     return jsonify(payload)
 
 
