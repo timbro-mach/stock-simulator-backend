@@ -489,6 +489,48 @@ def test_curriculum_modules_include_lesson_content_and_rich_assignments(app_clie
     assert all(len(q["sections"]) >= 3 for q in written["content"]["questions"])
 
 
+def test_curriculum_modules_expand_legacy_week1_assignment_prompts(app_client):
+    client, app_module = app_client
+    create_user(app_module, username="teacher", email="teacher@example.com")
+
+    resp = _create_competition(client, {
+        "username": "teacher",
+        "competition_name": "Legacy Prompt Cup",
+        "curriculumEnabled": True,
+        "curriculumWeeks": 3,
+        "curriculumStartDate": "2026-01-01",
+        "curriculumEndDate": "2026-01-31",
+    })
+    assert resp.status_code == 200
+
+    with app_module.app.app_context():
+        comp = app_module.Competition.query.filter_by(name="Legacy Prompt Cup").first()
+        curriculum = app_module.Curriculum.query.filter_by(competition_id=comp.id).first()
+        first_module = app_module.CurriculumModule.query.filter_by(curriculum_id=curriculum.id, week_number=1).first()
+        written = app_module.CurriculumAssignment.query.filter_by(module_id=first_module.id, type="assignment").first()
+        written.content_json = {
+            "instructions": "Week 1 Assignment (20 pts)\n\nGetting Started in the Simulator",
+            "questions": [
+                {"id": "a1", "kind": "quantitative", "points": 10, "prompt": "Part 1: First Trades (Quantitative – 10 pts)"},
+                {"id": "a2", "kind": "qualitative", "points": 10, "prompt": "Part 2: Add 2 Stocks (Qualitative – 10 pts)"},
+            ],
+        }
+        app_module.db.session.commit()
+        competition_id = comp.id
+        written_id = written.id
+
+    modules_resp = client.get(f"/curriculum/competition/{competition_id}/modules")
+    assert modules_resp.status_code == 200
+    modules = modules_resp.get_json()
+    first_module_payload = modules[0]
+    written_payload = next(a for a in first_module_payload["assignments"] if a["assignmentId"] == written_id)
+    assert all(len(q.get("sections", [])) >= 3 for q in written_payload["content"]["questions"])
+
+    with app_module.app.app_context():
+        persisted = app_module.db.session.get(app_module.CurriculumAssignment, written_id)
+        assert all(len(q.get("sections", [])) >= 3 for q in persisted.content_json["questions"])
+
+
 def test_instructor_can_list_submissions_and_manually_grade(app_client):
     client, app_module = app_client
     create_user(app_module, username="teacher", email="teacher@example.com")
