@@ -1768,3 +1768,335 @@ def test_trade_updates_grade_summary_progress_and_respects_due_day(app_client, m
     grades_payload = grades_resp.get_json()
     assert grades_payload["moduleGrades"][0]["tradeParticipation"]["tradeCompleted"] is True
     assert grades_payload["progressPercentage"] > 0
+
+
+# --------------------------------------------------------------------------
+# Curriculum deployment fixes: eText cleanup, quiz snapshot, module locking,
+# and instructor lesson-content authoring.
+# --------------------------------------------------------------------------
+
+
+def _create_curriculum_cup(client, app_module, name, weeks=3, enforce=False):
+    create_user(app_module, username="teacher", email=f"teacher-{name}@example.com")
+    create_user(app_module, username="student", email=f"student-{name}@example.com")
+    resp = _create_competition(client, {
+        "username": "teacher",
+        "competition_name": name,
+        "curriculumEnabled": True,
+        "curriculumWeeks": weeks,
+        "curriculumStartDate": "2026-01-01",
+        "curriculumEndDate": "2026-02-15",
+    })
+    assert resp.status_code == 200
+    with app_module.app.app_context():
+        comp = app_module.Competition.query.filter_by(name=name).first()
+        student = app_module.User.query.filter_by(username="student").first()
+        app_module.db.session.add(
+            app_module.CompetitionMember(competition_id=comp.id, user_id=student.id, cash_balance=100000)
+        )
+        if enforce:
+            curriculum = app_module.Curriculum.query.filter_by(competition_id=comp.id).first()
+            curriculum.enforce_prerequisites = True
+        app_module.db.session.commit()
+        return comp.id, student.id
+
+
+def test_etext_strips_assignment_and_quiz_alignment_maps(app_client):
+    # Issue #3: assignment prompts must not bleed into the eText body.
+    client, app_module = app_client
+    competition_id, _ = _create_curriculum_cup(client, app_module, "Alignment Cleanup Cup", weeks=4)
+    resp = client.get(f"/curriculum/competition/{competition_id}/modules")
+    assert resp.status_code == 200
+    modules = resp.get_json()
+    assert len(modules) == 4
+    # Week 1 uses the custom eText; weeks 2+ use the template that we cleaned up.
+    for module in modules[1:]:
+        body = module["lessonContent"]
+        assert "Quiz alignment map" not in body
+        assert "Assignment alignment map" not in body
+        # Confirm the template still emits the teaching sections we expect.
+        assert "Deep dive" in body
+        assert "Worked example" in body
+        assert "Step-by-step decision workflow" in body
+
+
+def test_etext_weeks_2_through_10_have_module_specific_content(app_client):
+    # Issue #1: weeks 2-10 should have meaningfully different eText, not the same template.
+    client, app_module = app_client
+    competition_id, _ = _create_curriculum_cup(client, app_module, "eText Depth Cup", weeks=10)
+    resp = client.get(f"/curriculum/competition/{competition_id}/modules")
+    assert resp.status_code == 200
+    modules = resp.get_json()
+    assert len(modules) == 10
+    bodies = [m["lessonContent"] for m in modules]
+    # Every module body is long enough to be substantive.
+    for idx, body in enumerate(bodies, start=1):
+        assert body and len(body) > 1200, f"week {idx} eText is too short"
+    # Weeks 2-10 should be distinct from each other (no duplicates from the shared template).
+    assert len(set(bodies[1:])) == len(bodies[1:])
+    # Spot-check module-specific keywords appear only in the relevant module body.
+    risk_body = next(m["lessonContent"] for m in modules if "Risk and Return" in m["title"])
+    assert "Sharpe" in risk_body or "drawdown" in risk_body.lower()
+
+
+def test_quiz_has_20_unique_question_stems(app_client):
+    # Issue #2 (part a): duplicate stems from bank[idx % 10] caused perceived jumping.
+    client, app_module = app_client
+    competition_id, _ = _create_curriculum_cup(client, app_module, "Quiz Uniqueness Cup", weeks=3)
+    resp = client.get(f"/curriculum/competition/{competition_id}/modules")
+    assert resp.status_code == 200
+    modules = resp.get_json()
+    for module in modules:
+        quiz = next(a for a in module["assignments"] if a["type"] == "quiz")
+        prompts = [q["prompt"] for q in quiz["content"]["questions"]]
+        assert len(prompts) == 20
+        assert len(set(prompts)) == 20, f"week {module['weekNumber']} has duplicate quiz stems"
+
+
+def test_quiz_grades_against_snapshot_even_when_answer_key_edited(app_client):
+    # Issue #2 (part b): once a student starts a quiz, grading must use the snapshot,
+    # not whatever the current assignment answer_key_json is.
+    client, app_module = app_client
+    competition_id, student_id = _create_curriculum_cup(client, app_module, "Snapshot Quiz Cup", weeks=3)
+    with app_module.app.app_context():
+        curriculum = app_module.Curriculum.query.filter_by(competition_id=competition_id).first()
+        first_module = app_module.CurriculumModule.query.filter_by(
+            curriculum_id=curriculum.id, week_number=1
+        ).first()
+        quiz = app_module.CurriculumAssignment.query.filter_by(module_id=first_module.id, type="quiz").first()
+        quiz_id = quiz.id
+        original_key = dict(quiz.answer_key_json["questions"])
+    # Submit correct answers against the ORIGINAL key.
+    resp = client.post(
+        f"/curriculum/assignments/{quiz_id}/submissions",
+        json={"username": "student", "competition_id": competition_id, "answers": original_key},
+    )
+    assert resp.status_code == 200
+    assert resp.get_json()["percentage"] == 100
+    # Now rewrite the live answer_key_json to different answers.
+    with app_module.app.app_context():
+        quiz = app_module.db.session.get(app_module.CurriculumAssignment, quiz_id)
+        wrong_key = {qid: "TOTALLY WRONG" for qid in original_key.keys()}
+        quiz.answer_key_json = {"questions": wrong_key}
+        app_module.db.session.commit()
+    # Re-submit the same original answers. The snapshot taken at first submission should
+    # still match, so the student should still score 100.
+    resp2 = client.post(
+        f"/curriculum/assignments/{quiz_id}/submissions",
+        json={"username": "student", "competition_id": competition_id, "answers": original_key},
+    )
+    assert resp2.status_code == 200
+    payload = resp2.get_json()
+    assert payload["percentage"] == 100, "snapshot grading should ignore mid-attempt answer-key edits"
+    assert payload["feedback"].get("gradedAgainstSnapshot") is True
+
+
+def test_modules_return_lock_metadata(app_client):
+    client, app_module = app_client
+    competition_id, _ = _create_curriculum_cup(client, app_module, "Lock Metadata Cup", weeks=4)
+    resp = client.get(
+        f"/curriculum/competition/{competition_id}/modules",
+        query_string={"username": "student"},
+    )
+    assert resp.status_code == 200
+    modules = resp.get_json()
+    for module in modules:
+        for field in ("locked", "prerequisiteMet", "prerequisiteModuleId", "enforcePrerequisites", "passingThreshold"):
+            assert field in module
+    # Week 1 has no prerequisite.
+    assert modules[0]["prerequisiteModuleId"] is None
+    # Week 2 points to week 1.
+    assert modules[1]["prerequisiteModuleId"] == modules[0]["moduleId"]
+
+
+def test_locked_module_rejects_submission_with_423(app_client):
+    # Issue #4: when enforce_prerequisites is on, posting to a module whose prerequisite
+    # isn't passed must return 423 Locked.
+    client, app_module = app_client
+    competition_id, _ = _create_curriculum_cup(client, app_module, "Lock Enforce Cup", weeks=3, enforce=True)
+    with app_module.app.app_context():
+        curriculum = app_module.Curriculum.query.filter_by(competition_id=competition_id).first()
+        week2 = app_module.CurriculumModule.query.filter_by(
+            curriculum_id=curriculum.id, week_number=2
+        ).first()
+        week2_quiz = app_module.CurriculumAssignment.query.filter_by(module_id=week2.id, type="quiz").first()
+        week2_quiz_id = week2_quiz.id
+        answer_key = dict(week2_quiz.answer_key_json["questions"])
+    resp = client.post(
+        f"/curriculum/assignments/{week2_quiz_id}/submissions",
+        json={"username": "student", "competition_id": competition_id, "answers": answer_key},
+    )
+    assert resp.status_code == 423
+    body = resp.get_json()
+    assert body["locked"] is True
+    assert body["prerequisiteMet"] is False
+
+
+def test_passing_prerequisite_unlocks_next_module(app_client):
+    # Issue #4: after passing week 1's quiz, week 2 should no longer be locked for submission.
+    client, app_module = app_client
+    competition_id, _ = _create_curriculum_cup(client, app_module, "Prereq Unlock Cup", weeks=3, enforce=True)
+    with app_module.app.app_context():
+        curriculum = app_module.Curriculum.query.filter_by(competition_id=competition_id).first()
+        week1 = app_module.CurriculumModule.query.filter_by(
+            curriculum_id=curriculum.id, week_number=1
+        ).first()
+        week2 = app_module.CurriculumModule.query.filter_by(
+            curriculum_id=curriculum.id, week_number=2
+        ).first()
+        week1_quiz = app_module.CurriculumAssignment.query.filter_by(module_id=week1.id, type="quiz").first()
+        week2_quiz = app_module.CurriculumAssignment.query.filter_by(module_id=week2.id, type="quiz").first()
+        week1_quiz_id = week1_quiz.id
+        week2_quiz_id = week2_quiz.id
+        week1_key = dict(week1_quiz.answer_key_json["questions"])
+        week2_key = dict(week2_quiz.answer_key_json["questions"])
+    # Pass week 1.
+    r1 = client.post(
+        f"/curriculum/assignments/{week1_quiz_id}/submissions",
+        json={"username": "student", "competition_id": competition_id, "answers": week1_key},
+    )
+    assert r1.status_code == 200
+    assert r1.get_json()["percentage"] == 100
+    # Now week 2 should be submittable.
+    r2 = client.post(
+        f"/curriculum/assignments/{week2_quiz_id}/submissions",
+        json={"username": "student", "competition_id": competition_id, "answers": week2_key},
+    )
+    assert r2.status_code == 200
+    assert r2.get_json()["percentage"] == 100
+
+
+def test_instructor_bypasses_module_lock(app_client):
+    client, app_module = app_client
+    competition_id, _ = _create_curriculum_cup(client, app_module, "Instructor Bypass Cup", weeks=3, enforce=True)
+    resp = client.get(
+        f"/curriculum/competition/{competition_id}/modules",
+        query_string={"username": "teacher"},
+    )
+    assert resp.status_code == 200
+    for module in resp.get_json():
+        assert module["locked"] is False
+
+
+def test_failing_quiz_below_threshold_keeps_next_module_locked(app_client):
+    # A submission below the passing_threshold should NOT unlock the next module.
+    client, app_module = app_client
+    competition_id, _ = _create_curriculum_cup(client, app_module, "Failing Quiz Lock Cup", weeks=3, enforce=True)
+    with app_module.app.app_context():
+        curriculum = app_module.Curriculum.query.filter_by(competition_id=competition_id).first()
+        week1 = app_module.CurriculumModule.query.filter_by(curriculum_id=curriculum.id, week_number=1).first()
+        week2 = app_module.CurriculumModule.query.filter_by(curriculum_id=curriculum.id, week_number=2).first()
+        week1_quiz = app_module.CurriculumAssignment.query.filter_by(module_id=week1.id, type="quiz").first()
+        week2_quiz = app_module.CurriculumAssignment.query.filter_by(module_id=week2.id, type="quiz").first()
+        week1_quiz_id = week1_quiz.id
+        week2_quiz_id = week2_quiz.id
+    # Submit all wrong answers to week 1.
+    wrong = {f"q{i+1}": "NOPE" for i in range(20)}
+    fail_resp = client.post(
+        f"/curriculum/assignments/{week1_quiz_id}/submissions",
+        json={"username": "student", "competition_id": competition_id, "answers": wrong},
+    )
+    assert fail_resp.status_code == 200
+    assert fail_resp.get_json()["percentage"] == 0
+    # Week 2 should still be locked.
+    resp = client.post(
+        f"/curriculum/assignments/{week2_quiz_id}/submissions",
+        json={"username": "student", "competition_id": competition_id, "answers": {}},
+    )
+    assert resp.status_code == 423
+
+
+def test_patch_lesson_content_updates_instructor_only(app_client):
+    # Issue #1: instructors can author/update eText per module without regenerating curriculum.
+    client, app_module = app_client
+    create_user(app_module, username="teacher", email="patch-teacher@example.com")
+    create_user(app_module, username="student", email="patch-student@example.com")
+    create_user(app_module, username="outsider", email="patch-outsider@example.com")
+    resp = _create_competition(client, {
+        "username": "teacher",
+        "competition_name": "Patch eText Cup",
+        "curriculumEnabled": True,
+        "curriculumWeeks": 3,
+        "curriculumStartDate": "2026-01-01",
+        "curriculumEndDate": "2026-02-15",
+    })
+    assert resp.status_code == 200
+    with app_module.app.app_context():
+        comp = app_module.Competition.query.filter_by(name="Patch eText Cup").first()
+        curriculum = app_module.Curriculum.query.filter_by(competition_id=comp.id).first()
+        modules = app_module.CurriculumModule.query.filter_by(curriculum_id=curriculum.id).order_by(
+            app_module.CurriculumModule.week_number.asc()
+        ).all()
+        competition_id = comp.id
+        module_ids = [m.id for m in modules]
+
+    # Happy path: instructor updates two modules.
+    ok_resp = client.patch(
+        f"/curriculum/competition/{competition_id}/modules/lesson-content",
+        json={
+            "username": "teacher",
+            "updates": [
+                {"moduleId": module_ids[0], "lessonContent": "## Custom Week 1\n\nNew authored content."},
+                {"moduleId": module_ids[1], "lessonContent": "## Custom Week 2\n\nNew authored content."},
+            ],
+        },
+    )
+    assert ok_resp.status_code == 200
+    payload = ok_resp.get_json()
+    assert payload["updatedCount"] == 2
+    assert set(payload["updatedModuleIds"]) == {module_ids[0], module_ids[1]}
+
+    # Verify the module payload now reflects the custom content.
+    modules_resp = client.get(f"/curriculum/competition/{competition_id}/modules")
+    assert modules_resp.status_code == 200
+    new_modules = modules_resp.get_json()
+    assert "## Custom Week 1" in new_modules[0]["lessonContent"]
+    assert "## Custom Week 2" in new_modules[1]["lessonContent"]
+
+    # Non-instructor is forbidden.
+    forbidden_resp = client.patch(
+        f"/curriculum/competition/{competition_id}/modules/lesson-content",
+        json={
+            "username": "outsider",
+            "updates": [{"moduleId": module_ids[0], "lessonContent": "Hacked"}],
+        },
+    )
+    assert forbidden_resp.status_code == 403
+
+    # moduleId outside this curriculum is rejected.
+    bad_id_resp = client.patch(
+        f"/curriculum/competition/{competition_id}/modules/lesson-content",
+        json={
+            "username": "teacher",
+            "updates": [{"moduleId": 999999, "lessonContent": "Does not matter"}],
+        },
+    )
+    assert bad_id_resp.status_code == 400
+
+    # Empty content is rejected.
+    empty_resp = client.patch(
+        f"/curriculum/competition/{competition_id}/modules/lesson-content",
+        json={
+            "username": "teacher",
+            "updates": [{"moduleId": module_ids[0], "lessonContent": "   "}],
+        },
+    )
+    assert empty_resp.status_code == 400
+
+
+def test_enforce_prerequisites_defaults_off_for_back_compat(app_client):
+    # Existing competitions keep the legacy behavior (modules readable regardless of completion).
+    client, app_module = app_client
+    competition_id, _ = _create_curriculum_cup(client, app_module, "Default Flag Off Cup", weeks=3, enforce=False)
+    with app_module.app.app_context():
+        curriculum = app_module.Curriculum.query.filter_by(competition_id=competition_id).first()
+        week2 = app_module.CurriculumModule.query.filter_by(curriculum_id=curriculum.id, week_number=2).first()
+        week2_quiz = app_module.CurriculumAssignment.query.filter_by(module_id=week2.id, type="quiz").first()
+        week2_quiz_id = week2_quiz.id
+        week2_key = dict(week2_quiz.answer_key_json["questions"])
+    # Without completing week 1, week 2 should still accept submissions.
+    resp = client.post(
+        f"/curriculum/assignments/{week2_quiz_id}/submissions",
+        json={"username": "student", "competition_id": competition_id, "answers": week2_key},
+    )
+    assert resp.status_code == 200
