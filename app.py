@@ -752,28 +752,418 @@ def _module_teaching_plan(module_title, module_description):
             ],
             "likely_confusion": "Students confuse activity with progress; more trades is not automatically better investing.",
             "scenario": "A student rotates through trending names and trails a broad ETF. Your task is to diagnose why process failed.",
+            "deep_dive_paragraphs": [
+                "Markets exist to price claims on future cash flows. In primary markets, companies and governments raise capital by issuing new shares or bonds. In secondary markets—where almost all simulator activity happens—existing claims change hands. Understanding the distinction matters: secondary-market price changes transfer ownership but do not move capital to the underlying business. A stock rising 10% in your portfolio does not feed the company's balance sheet.",
+                "Asset classes group securities by shared risk/return behavior: public equity for growth and long-term compounding, investment-grade fixed income for capital preservation and income, cash equivalents for liquidity, and alternatives (real estate, commodities, private assets) for additional diversification. New investors frequently pick individual names before deciding what share of capital each asset class should hold. Reversing that order—allocation first, security selection second—removes most of the avoidable mistakes.",
+                "Compounding is the slow and unglamorous core of long-horizon investing. A 7% real annual return doubles purchasing power roughly every ten years; a 9% real return doubles it roughly every eight. The gap between those two paths is an enormous terminal-wealth difference created almost entirely by discipline—saving consistently, keeping costs low, staying invested through drawdowns, and avoiding large behavioral errors during stress.",
+            ],
+            "worked_example": (
+                "Two simulator accounts start with $100,000. Account A buys SPY and holds. Account B trades 4–6 single names per week, chasing short-term news. After three months, Account A tracks the index with trivial friction; Account B lags by 280 bps after commissions, taxes, and two concentrated losses. The difference is not IQ; it is process: Account A accepted market-beta as a baseline and protected it from turnover, while Account B paid ongoing costs in exchange for an inconsistent edge.",
+            ),
+            "quiz_bank": [
+                ("Which statement best describes the primary vs secondary market distinction?", [
+                    "Primary markets raise new capital for issuers; secondary markets transfer existing claims between investors.",
+                    "Primary markets only trade government bonds; secondary markets only trade stocks.",
+                    "Primary markets are weekdays and secondary markets are weekends.",
+                    "There is no operational difference between them.",
+                ], "Primary markets raise new capital for issuers; secondary markets transfer existing claims between investors."),
+                ("Why is allocation typically decided before security selection?", [
+                    "Because asset-class mix controls most of the risk/return profile over long horizons.",
+                    "Because individual stocks are always riskier than indexes.",
+                    "Because only allocation affects taxes.",
+                    "Because security selection is banned in retirement accounts.",
+                ], "Because asset-class mix controls most of the risk/return profile over long horizons."),
+                ("Compounding is most accurately described as:", [
+                    "Returns earned on prior returns, amplifying growth over long horizons.",
+                    "A guaranteed fixed return paid annually by the exchange.",
+                    "The fee brokers charge for holding positions overnight.",
+                    "Only relevant inside tax-advantaged accounts.",
+                ], "Returns earned on prior returns, amplifying growth over long horizons."),
+                ("Which action most directly reduces avoidable cost drag on a long-horizon portfolio?", [
+                    "Lowering turnover and preferring low-expense-ratio core vehicles.",
+                    "Increasing turnover to capture more idiosyncratic moves.",
+                    "Using only leveraged ETFs for core exposure.",
+                    "Rebalancing daily with market orders.",
+                ], "Lowering turnover and preferring low-expense-ratio core vehicles."),
+                ("A student buys AAPL at $190 and it rises to $210. Which statement is correct about that gain?", [
+                    "The gain is unrealized until sold and does not transfer cash to Apple's balance sheet.",
+                    "The $20 moves directly from Apple's treasury to the student.",
+                    "The gain is realized automatically at market close.",
+                    "Apple must pay the student a dividend equal to the gain.",
+                ], "The gain is unrealized until sold and does not transfer cash to Apple's balance sheet."),
+                ("Which asset class is typically held mainly for liquidity rather than growth?", [
+                    "Cash and short-duration Treasuries (e.g., BIL).",
+                    "Small-cap emerging-market equity.",
+                    "Long-duration growth equity.",
+                    "Commodities futures.",
+                ], "Cash and short-duration Treasuries (e.g., BIL)."),
+                ("An investor has a 20-year horizon and stable income. What is the most common early mistake?", [
+                    "Holding too much cash and missing long-horizon compounding.",
+                    "Holding too many long-duration Treasuries.",
+                    "Owning broad equity index funds.",
+                    "Rebalancing once per year.",
+                ], "Holding too much cash and missing long-horizon compounding."),
+                ("Which best describes 'time in the market' versus 'timing the market' for long-horizon investors?", [
+                    "Time in the market generally dominates because missing a few best days materially lowers terminal wealth.",
+                    "Timing the market is easy because trends are always obvious.",
+                    "Neither matters if you pick any index fund.",
+                    "Timing dominates because transaction costs are zero.",
+                ], "Time in the market generally dominates because missing a few best days materially lowers terminal wealth."),
+                ("A diversified equity ETF is 'tax efficient' primarily because:", [
+                    "Its low turnover limits realized capital-gain distributions.",
+                    "It pays no dividends by law.",
+                    "It is exempt from federal tax.",
+                    "It uses only options to generate returns.",
+                ], "Its low turnover limits realized capital-gain distributions."),
+                ("Which is the strongest argument for starting with a broad index core?", [
+                    "It produces market-beta at low cost and avoids single-name selection risk early.",
+                    "It guarantees outperformance of any single stock.",
+                    "It eliminates all market risk.",
+                    "It requires no rebalancing ever.",
+                ], "It produces market-beta at low cost and avoids single-name selection risk early."),
+                ("If a new investor opens 12 positions of 1-2% each across one theme, the portfolio is best described as:", [
+                    "Nominally diversified but concentrated in a single risk factor.",
+                    "Fully diversified because of the position count.",
+                    "Low-risk because each position is small.",
+                    "Hedged because it holds multiple tickers.",
+                ], "Nominally diversified but concentrated in a single risk factor."),
+                ("'Investing without a written plan' is risky mainly because:", [
+                    "Emotion overwrites decisions in volatile conditions when no pre-committed rules exist.",
+                    "Brokers charge extra for unplanned orders.",
+                    "Market makers reject orders without a plan.",
+                    "The SEC requires a written plan.",
+                ], "Emotion overwrites decisions in volatile conditions when no pre-committed rules exist."),
+                ("Bid-ask spread is best defined as:", [
+                    "The difference between the highest price buyers will pay and the lowest price sellers will accept.",
+                    "The broker's annual fee.",
+                    "The gap between open and close price.",
+                    "The spread between dividend and yield.",
+                ], "The difference between the highest price buyers will pay and the lowest price sellers will accept."),
+                ("Which statement best characterizes 'process over prediction' in this course?", [
+                    "Consistent application of rules under uncertainty beats confident one-off forecasts.",
+                    "Forecasts are irrelevant in all markets.",
+                    "Rules should be rewritten after every losing trade.",
+                    "Only short-term traders benefit from process.",
+                ], "Consistent application of rules under uncertainty beats confident one-off forecasts."),
+                ("A 'position size' of 5% of portfolio on a stock with a 20% expected drawdown produces roughly what portfolio-level loss in that drawdown?", [
+                    "About 1% of total portfolio value.",
+                    "About 5% of total portfolio value.",
+                    "About 20% of total portfolio value.",
+                    "Zero loss because diversification eliminates it.",
+                ], "About 1% of total portfolio value."),
+                ("Which is true about fees and compounding over long horizons?", [
+                    "Small recurring fee differences compound into large terminal-wealth gaps.",
+                    "Fees are irrelevant to long-horizon returns.",
+                    "Higher fees guarantee better performance.",
+                    "Fees only affect tax-deferred accounts.",
+                ], "Small recurring fee differences compound into large terminal-wealth gaps."),
+                ("A student complains their ETF 'did nothing this week' and wants to trade. The strongest eText response is:", [
+                    "Action is not edge; absence of a plan-triggered signal means no trade is required.",
+                    "Trade immediately to feel engaged.",
+                    "Double position size to force a result.",
+                    "Switch to a leveraged ETF.",
+                ], "Action is not edge; absence of a plan-triggered signal means no trade is required."),
+                ("Which investor behavior best protects long-horizon returns during a 20%+ drawdown?", [
+                    "Following a pre-written rebalancing and rule-based allocation policy rather than news-reactive selling.",
+                    "Selling all equity exposure on the first red week.",
+                    "Switching to 100% concentrated single names for catch-up.",
+                    "Ignoring the portfolio entirely for a decade.",
+                ], "Following a pre-written rebalancing and rule-based allocation policy rather than news-reactive selling."),
+                ("A 'thesis' in this course is best described as:", [
+                    "A testable one-sentence claim about why the investment should work, with a horizon and evidence.",
+                    "A price target alone.",
+                    "A recommendation from a popular news source.",
+                    "A promise that the position cannot lose money.",
+                ], "A testable one-sentence claim about why the investment should work, with a horizon and evidence."),
+                ("Why is documenting your horizon up front important?", [
+                    "Because volatility only matters relative to the horizon over which you must hold.",
+                    "Because horizon is regulated by the exchange.",
+                    "Because horizon determines tax rate.",
+                    "Because horizon replaces the need for diversification.",
+                ], "Because volatility only matters relative to the horizon over which you must hold."),
+            ],
         })
     elif "risk and return" in lower_title:
         plan.update({
             "hook": "Return is attractive, but risk determines whether your process is durable.",
             "core_terms": [
-                ("Volatility", "The variability of returns around average."),
+                ("Volatility", "The variability of returns around average, often measured by standard deviation."),
                 ("Drawdown", "Peak-to-trough decline that tests both capital and psychology."),
-                ("Risk-adjusted return", "Return evaluated relative to the risk required to earn it."),
+                ("Risk-adjusted return", "Return evaluated relative to the risk required to earn it (e.g., Sharpe)."),
             ],
             "likely_confusion": "Strong trailing returns are often mistaken for low future risk after extended rallies.",
             "scenario": "Two portfolios both return 10%, but one suffered a -28% drawdown and one only -8%. Decide which process is stronger and why.",
+            "deep_dive_paragraphs": [
+                "Volatility measures how much returns fluctuate around their average. Higher volatility means wider possible outcomes in both directions, but it is not the same as risk. Risk is about what you are forced to do when outcomes land in the left tail: sell at the worst possible time, abandon the plan, or size down permanently. Two assets with the same average return can feel completely different to hold if one volatilizes twice as much.",
+                "Drawdowns are the single most important statistic students ignore. A -50% drawdown requires a +100% gain to recover; a -20% drawdown requires only +25%. A portfolio designed to recover from a -20% event is structurally different from one that tolerates -50%. Sizing, diversification, and leverage decisions should all trace back to the drawdown you can endure without changing behavior.",
+                "Risk-adjusted return metrics (Sharpe, Sortino, Calmar) evaluate return per unit of risk. A portfolio returning 10% with 8% volatility is usually more defensible than one returning 13% with 30% volatility, because the first is easier to stick with and leverage responsibly. The goal is not max return; it is max return you can actually achieve given your behavior under stress.",
+            ],
+            "worked_example": (
+                "Portfolio A: +10% return, 12% annualized volatility, max drawdown -8%. Portfolio B: +12% return, 28% annualized volatility, max drawdown -34%. Sharpe (rf=2%) is ~0.67 for A and ~0.36 for B. A real investor is twice as likely to stay in A through the full cycle—meaning the better risk-adjusted process is more likely to compound. Picking B on headline return is the classic rookie error."
+            ),
+            "quiz_bank": [
+                ("Volatility is best defined as:", [
+                    "The variability of returns around their mean.",
+                    "The average return earned over a year.",
+                    "The dividend yield of the portfolio.",
+                    "The number of trades placed per week.",
+                ], "The variability of returns around their mean."),
+                ("A portfolio drops -25% from its peak. To fully recover, it must gain:", [
+                    "About 33%.",
+                    "About 25%.",
+                    "About 15%.",
+                    "Exactly 25%.",
+                ], "About 33%."),
+                ("Risk in this course is most accurately described as:", [
+                    "The range and severity of outcomes, especially on the downside, that can force you off your plan.",
+                    "Only the standard deviation of returns.",
+                    "The likelihood of making money.",
+                    "Whatever the news says is scary this week.",
+                ], "The range and severity of outcomes, especially on the downside, that can force you off your plan."),
+                ("Two portfolios both return 10%. Portfolio X had max drawdown -8%, Portfolio Y had -28%. Which statement is best supported?", [
+                    "X likely has a stronger risk-adjusted process and is easier to stay invested in.",
+                    "Y is clearly better because drawdown is irrelevant.",
+                    "They are equivalent because returns match.",
+                    "X must be lower risk-adjusted because it had less volatility.",
+                ], "X likely has a stronger risk-adjusted process and is easier to stay invested in."),
+                ("Sharpe ratio primarily measures:", [
+                    "Excess return earned per unit of volatility.",
+                    "Total nominal return.",
+                    "Total turnover.",
+                    "Dividend yield.",
+                ], "Excess return earned per unit of volatility."),
+                ("Why is a 'tolerable drawdown' set before entering a position?", [
+                    "So position sizing and invalidation rules match the behavioral capacity of the investor.",
+                    "Because exchanges require it.",
+                    "To guarantee no loss.",
+                    "To remove the need for diversification.",
+                ], "So position sizing and invalidation rules match the behavioral capacity of the investor."),
+                ("If an asset has 20% annual volatility and a 10% expected return, a one-standard-deviation range of one-year outcomes is roughly:", [
+                    "-10% to +30%.",
+                    "+10% only.",
+                    "-20% to +20%.",
+                    "-40% to +60%.",
+                ], "-10% to +30%."),
+                ("Which pair is most likely to be confused but is not the same?", [
+                    "Low trailing volatility and low forward risk after a long rally.",
+                    "Bid price and ask price.",
+                    "Cash and margin.",
+                    "Market order and limit order.",
+                ], "Low trailing volatility and low forward risk after a long rally."),
+                ("Leverage tends to do which of the following to drawdowns?", [
+                    "Amplifies them beyond the unlevered exposure.",
+                    "Eliminates them.",
+                    "Caps them at -10%.",
+                    "Converts them into gains.",
+                ], "Amplifies them beyond the unlevered exposure."),
+                ("Which statement about correlation during crises is most accurate?", [
+                    "Correlations between risk assets tend to rise sharply in crises, reducing diversification benefit.",
+                    "Correlations fall to zero in crises.",
+                    "Correlations become irrelevant in crises.",
+                    "Correlations invert permanently after a crisis.",
+                ], "Correlations between risk assets tend to rise sharply in crises, reducing diversification benefit."),
+                ("A strategy with 15% return, 35% volatility, and 50% max drawdown is weaker than one with 11% return, 10% volatility, and 14% drawdown mainly because:", [
+                    "The first strategy's risk profile is much harder to hold and is likely to cause plan-breaking behavior.",
+                    "Higher return is always better.",
+                    "Drawdown is irrelevant to investors.",
+                    "The first strategy must have lower fees.",
+                ], "The first strategy's risk profile is much harder to hold and is likely to cause plan-breaking behavior."),
+                ("Sortino ratio differs from Sharpe because it:", [
+                    "Penalizes only downside volatility rather than total volatility.",
+                    "Uses turnover instead of returns.",
+                    "Ignores returns entirely.",
+                    "Uses Beta instead of volatility.",
+                ], "Penalizes only downside volatility rather than total volatility."),
+                ("A 'risk-free rate' in this course most often refers to:", [
+                    "Short-duration government bill yields used as a baseline.",
+                    "The best single-stock return last year.",
+                    "The average dividend yield of the S&P 500.",
+                    "Zero under all conditions.",
+                ], "Short-duration government bill yields used as a baseline."),
+                ("Why do behavioral biases hurt risk-adjusted returns more than nominal returns?", [
+                    "Because panic selling in drawdowns converts temporary losses into permanent ones.",
+                    "Because biases only affect dividend reinvestment.",
+                    "Because biases increase volatility but not losses.",
+                    "Because biases only matter in bull markets.",
+                ], "Because panic selling in drawdowns converts temporary losses into permanent ones."),
+                ("The most durable way to reduce drawdown risk is typically:", [
+                    "Lower position sizing on the most volatile holdings and diversify across uncorrelated return drivers.",
+                    "Concentrate into last year's best performer.",
+                    "Use maximum leverage on high-conviction ideas.",
+                    "Ignore correlation.",
+                ], "Lower position sizing on the most volatile holdings and diversify across uncorrelated return drivers."),
+                ("Volatility drag means that:", [
+                    "Arithmetic average returns overstate compounded (geometric) returns when volatility is high.",
+                    "Volatility increases compounded returns.",
+                    "Volatility is the same as the average return.",
+                    "Drag only affects bond portfolios.",
+                ], "Arithmetic average returns overstate compounded (geometric) returns when volatility is high."),
+                ("If a stock has a daily return with mean 0.05% and std 2%, the one-day 1-in-6 (approx) downside move is roughly:", [
+                    "About -2%.",
+                    "About -20%.",
+                    "About -0.05%.",
+                    "Zero because expected return is positive.",
+                ], "About -2%."),
+                ("A 'tail risk' is best described as:", [
+                    "Low-probability, high-magnitude outcomes whose impact dominates averages.",
+                    "The last trade of the day.",
+                    "The last position in a portfolio.",
+                    "The dividend paid in the fourth quarter.",
+                ], "Low-probability, high-magnitude outcomes whose impact dominates averages."),
+                ("Which action reflects strong risk management after a 15% drawdown?", [
+                    "Re-check thesis, rebalance to target weights, and execute a pre-committed plan without sizing up impulsively.",
+                    "Double every position to recover faster.",
+                    "Sell all equity and hold cash permanently.",
+                    "Switch to untested strategies.",
+                ], "Re-check thesis, rebalance to target weights, and execute a pre-committed plan without sizing up impulsively."),
+                ("Risk-adjusted return matters more than absolute return for long-horizon investors mainly because:", [
+                    "It measures the return you can realistically earn while sticking to the plan.",
+                    "Brokers charge fees only on risk-adjusted returns.",
+                    "The IRS taxes only risk-adjusted returns.",
+                    "It is easier to compute.",
+                ], "It measures the return you can realistically earn while sticking to the plan."),
+            ],
         })
     elif "diversification" in lower_title:
         plan.update({
             "hook": "Diversification is about different risk behaviors, not just more ticker symbols.",
             "core_terms": [
-                ("Correlation", "How assets move relative to one another."),
+                ("Correlation", "How assets move relative to one another; ranges from -1 to +1."),
                 ("Idiosyncratic risk", "Single-company risk that can be diversified away."),
                 ("Concentration", "Overdependence on one position, sector, or factor."),
             ],
             "likely_confusion": "Owning many names in one theme is still concentrated risk.",
             "scenario": "Your portfolio holds eight names, but most risk is concentrated in one growth factor exposure.",
+            "deep_dive_paragraphs": [
+                "Diversification reduces the variance of outcomes when the added holdings have different risk drivers. If your portfolio already holds MSFT and you add NVDA, AMD, and AVGO, you are adding names but not diversifying—you are still almost entirely exposed to one factor (large-cap US semiconductors and AI capex). Real diversification comes from adding exposures that behave differently in the environments that hurt your existing holdings.",
+                "Correlation ranges from -1 (always moves opposite) to +1 (always moves together). Two assets at +0.95 correlation offer almost no diversification benefit; two assets at +0.2 can meaningfully reduce portfolio volatility without sacrificing expected return. But correlations are unstable, especially in crises, where most risk assets rise toward +1.0 together. Planning for that 'crisis correlation' is more important than optimizing to historical averages.",
+                "Idiosyncratic (single-name) risk decays quickly with diversification—adding even 10–20 uncorrelated positions removes most of it. Systematic (market) risk does not diversify away at the equity level. The practical implication: you do not need 50 stocks, but you do need exposures that do not all depend on the same macro factor to work.",
+            ],
+            "worked_example": (
+                "A student holds 6 stocks: AAPL, MSFT, GOOGL, AMZN, META, NVDA at ~15% weights each. Pairwise correlations average ~0.75. Portfolio 'effective' holdings (via correlation math) are closer to 2.5 independent bets, not 6. Swapping two positions for an energy holding (XOM) and a long-duration Treasury (IEF) drops average correlation to ~0.45 and meaningfully lowers drawdown exposure without hurting expected return materially."
+            ),
+            "quiz_bank": [
+                ("Diversification is most accurately described as:", [
+                    "Combining holdings whose return drivers differ so portfolio variance is lower than the weighted average of parts.",
+                    "Owning the maximum possible number of tickers.",
+                    "Buying one stock from every sector in the S&P 500.",
+                    "Holding equal dollar amounts of every position.",
+                ], "Combining holdings whose return drivers differ so portfolio variance is lower than the weighted average of parts."),
+                ("Correlation of +1.0 between two assets means:", [
+                    "They move together in lockstep, offering no diversification benefit.",
+                    "They always move in opposite directions.",
+                    "They are guaranteed to return the same amount annually.",
+                    "They have no relationship.",
+                ], "They move together in lockstep, offering no diversification benefit."),
+                ("Idiosyncratic risk is:", [
+                    "Single-name or single-company risk that can be diversified away with enough uncorrelated holdings.",
+                    "Identical to systematic market risk.",
+                    "Risk that compounds over time automatically.",
+                    "Risk from currency hedging only.",
+                ], "Single-name or single-company risk that can be diversified away with enough uncorrelated holdings."),
+                ("Owning eight semiconductor stocks instead of one is best described as:", [
+                    "Diversifying idiosyncratic single-name risk but remaining concentrated in one sector/factor.",
+                    "Fully diversifying both single-name and sector risk.",
+                    "Equivalent to owning a broad-market ETF.",
+                    "Eliminating all systemic risk.",
+                ], "Diversifying idiosyncratic single-name risk but remaining concentrated in one sector/factor."),
+                ("'Crisis correlation' describes:", [
+                    "The tendency for risk-asset correlations to rise toward +1 during market stress, reducing diversification.",
+                    "The correlation between cash and gold.",
+                    "The correlation between the VIX and price.",
+                    "A permanent new correlation regime.",
+                ], "The tendency for risk-asset correlations to rise toward +1 during market stress, reducing diversification."),
+                ("Roughly how many uncorrelated single-stock positions capture most of the available idiosyncratic-risk reduction?", [
+                    "10–20.",
+                    "Exactly 3.",
+                    "At least 500.",
+                    "None; diversification does not reduce idiosyncratic risk.",
+                ], "10–20."),
+                ("A student owns SPY, QQQ, and IVV. This is an example of:", [
+                    "Overlapping exposures—the three funds largely hold the same underlying companies.",
+                    "Global diversification across continents.",
+                    "Adding defensive bond exposure.",
+                    "Hedged cash.",
+                ], "Overlapping exposures—the three funds largely hold the same underlying companies."),
+                ("Adding long-duration Treasuries to an all-equity portfolio generally:", [
+                    "Reduces portfolio volatility in most environments because of lower equity correlation.",
+                    "Increases expected return materially.",
+                    "Guarantees no drawdown in any environment.",
+                    "Has no effect on volatility.",
+                ], "Reduces portfolio volatility in most environments because of lower equity correlation."),
+                ("Which statement about concentration risk is most accurate?", [
+                    "A single position above roughly 10–20% of portfolio substantially raises single-event risk.",
+                    "Concentration risk only applies to holdings above 50%.",
+                    "Concentration is never a problem if the position is profitable.",
+                    "Concentration is only relevant to bonds.",
+                ], "A single position above roughly 10–20% of portfolio substantially raises single-event risk."),
+                ("Systematic risk is best described as:", [
+                    "Market-wide risk that cannot be diversified away by adding more stocks.",
+                    "Risk from a single company's quarterly earnings.",
+                    "Risk caused by trading errors.",
+                    "Risk specific to one portfolio manager.",
+                ], "Market-wide risk that cannot be diversified away by adding more stocks."),
+                ("Why can correlations be unstable across regimes?", [
+                    "Return drivers (rates, liquidity, sentiment) change over cycles and shift how assets co-move.",
+                    "Exchanges reset correlations annually.",
+                    "Correlations are always stable.",
+                    "Only volatility is unstable; correlation is constant.",
+                ], "Return drivers (rates, liquidity, sentiment) change over cycles and shift how assets co-move."),
+                ("A portfolio of AAPL, MSFT, and GOOGL has average pairwise correlation of about 0.8. The portfolio is best described as:", [
+                    "Nominally diversified but heavily dependent on a common mega-cap US tech factor.",
+                    "Fully diversified because it has three names.",
+                    "International and factor-neutral.",
+                    "Low-risk by construction.",
+                ], "Nominally diversified but heavily dependent on a common mega-cap US tech factor."),
+                ("Which addition offers the strongest diversification to a US-large-cap-growth-heavy book?", [
+                    "Global value or short-duration bonds whose drivers differ from US large-cap growth.",
+                    "Another US large-cap growth ETF.",
+                    "A leveraged growth ETF.",
+                    "Additional single-name US mega-caps.",
+                ], "Global value or short-duration bonds whose drivers differ from US large-cap growth."),
+                ("'Position weight' is best defined as:", [
+                    "Position market value divided by total portfolio value.",
+                    "Number of shares held.",
+                    "Dividend yield of the position.",
+                    "Beta of the position.",
+                ], "Position market value divided by total portfolio value."),
+                ("Top-3 concentration (sum of top three weights) of 60% implies:", [
+                    "Portfolio outcomes are heavily driven by three positions, concentrating idiosyncratic risk.",
+                    "The portfolio is well diversified.",
+                    "The portfolio is index-tracking.",
+                    "Concentration is low.",
+                ], "Portfolio outcomes are heavily driven by three positions, concentrating idiosyncratic risk."),
+                ("Which pair most likely has low long-run correlation useful for diversification?", [
+                    "Broad equity and investment-grade long-duration Treasuries.",
+                    "SPY and IVV.",
+                    "QQQ and XLK.",
+                    "VOO and VTI.",
+                ], "Broad equity and investment-grade long-duration Treasuries."),
+                ("'Naive diversification' error most commonly means:", [
+                    "Adding positions without checking that their return drivers actually differ from existing holdings.",
+                    "Using equal-weighted portfolios.",
+                    "Holding too few asset classes.",
+                    "Refusing to hold bonds.",
+                ], "Adding positions without checking that their return drivers actually differ from existing holdings."),
+                ("Which of the following is NOT a typical diversification lever?", [
+                    "Taking full margin leverage on a single high-conviction idea.",
+                    "Adding uncorrelated asset classes.",
+                    "Spreading sector exposure.",
+                    "Rebalancing to target weights.",
+                ], "Taking full margin leverage on a single high-conviction idea."),
+                ("Why are equal-weighted portfolios often more diversified than cap-weighted ones?", [
+                    "Because cap-weighting concentrates risk in the largest names as they grow.",
+                    "Because equal-weighted portfolios are tax-free.",
+                    "Because they pay higher dividends.",
+                    "Because they have zero turnover.",
+                ], "Because cap-weighting concentrates risk in the largest names as they grow."),
+                ("If your portfolio's return is explained mostly by one factor (e.g., US growth), which is the best diagnostic step?", [
+                    "Run a factor decomposition and add exposure with a different primary driver.",
+                    "Add more of the same factor to double down.",
+                    "Reduce total equity to zero and hold cash.",
+                    "Ignore factor analysis—only individual names matter.",
+                ], "Run a factor decomposition and add exposure with a different primary driver."),
+            ],
         })
     elif "asset allocation" in lower_title:
         plan.update({
@@ -785,6 +1175,136 @@ def _module_teaching_plan(module_title, module_description):
             ],
             "likely_confusion": "Students often change allocation because of headlines, not because objective or risk capacity changed.",
             "scenario": "After a rally, equities rise from 60% to 74% of your mix. Decide whether to rebalance and defend the tradeoff.",
+            "deep_dive_paragraphs": [
+                "Strategic allocation is the long-term target mix that matches the investor's objectives, horizon, and behavioral capacity. Classic examples are 60/40 equity/bond, 80/20 growth-oriented, or risk-parity mixes that target equal risk contribution rather than equal dollars. Strategic allocation should change only when the underlying objective, horizon, or risk capacity changes—not in response to the last six months of performance.",
+                "Tactical tilts temporarily over- or under-weight parts of the strategic mix when valuation, momentum, or macro conditions provide durable evidence. The discipline is that tilts are bounded (e.g., +/- 10% of target weight), time-bound, and thesis-bound: if the evidence weakens, the tilt comes off. Undisciplined tactical trading turns into drift into whatever is currently comfortable.",
+                "Rebalancing is the mechanical restoration of target weights. Threshold rebalancing (e.g., when any sleeve drifts +/- 5% from target) typically outperforms calendar rebalancing because it only trades when the portfolio has actually drifted. Rebalancing also forces a contrarian behavior—selling what has appreciated, buying what has lagged—which improves compounded risk-adjusted returns over long horizons.",
+            ],
+            "worked_example": (
+                "Target 60% equity / 30% bonds / 10% cash with +/- 5% bands. After a 20% equity rally with bonds flat, allocation drifts to 67% / 25% / 8%. Rebalancing trades ~7% from equity back to bonds/cash and restores target. A student who 'lets winners run' holds 67% equity into the next drawdown and suffers a larger-than-planned loss because the risk profile silently migrated."
+            ),
+            "quiz_bank": [
+                ("Strategic allocation is best described as:", [
+                    "The long-term target mix linked to objectives, horizon, and risk capacity.",
+                    "The trade placed when the market gaps.",
+                    "The weekly changes to holdings.",
+                    "The sector tilts applied daily.",
+                ], "The long-term target mix linked to objectives, horizon, and risk capacity."),
+                ("A tactical tilt differs from strategic allocation because it is:", [
+                    "Temporary, evidence-based, and bounded in size.",
+                    "Permanent and unconstrained.",
+                    "Required by the broker.",
+                    "Identical to strategic allocation.",
+                ], "Temporary, evidence-based, and bounded in size."),
+                ("Rebalancing is most valuable because it:", [
+                    "Restores the risk profile the investor actually chose, enforcing 'sell high, buy low' mechanically.",
+                    "Maximizes turnover for tax purposes.",
+                    "Guarantees higher returns.",
+                    "Replaces the need for diversification.",
+                ], "Restores the risk profile the investor actually chose, enforcing 'sell high, buy low' mechanically."),
+                ("A portfolio with 60% equity drifts to 72% after a rally. The disciplined response is to:", [
+                    "Rebalance back toward target unless the investor's objectives or risk capacity have changed.",
+                    "Let it run indefinitely because winners should be held.",
+                    "Sell 100% of equity immediately.",
+                    "Switch to a single stock portfolio.",
+                ], "Rebalance back toward target unless the investor's objectives or risk capacity have changed."),
+                ("Which is the strongest justification for changing strategic allocation?", [
+                    "A material change in objectives, horizon, or risk capacity.",
+                    "A three-month period of equity strength.",
+                    "A single earnings miss from a large holding.",
+                    "A news cycle about interest rates.",
+                ], "A material change in objectives, horizon, or risk capacity."),
+                ("Calendar rebalancing means rebalancing:", [
+                    "On a fixed schedule (e.g., quarterly) regardless of drift.",
+                    "Only when a single stock changes price.",
+                    "Never; calendar rebalancing is prohibited.",
+                    "Only after presidential elections.",
+                ], "On a fixed schedule (e.g., quarterly) regardless of drift."),
+                ("Threshold rebalancing means rebalancing:", [
+                    "Whenever any sleeve drifts outside a pre-defined band.",
+                    "Only in leap years.",
+                    "Only when return is positive.",
+                    "On every trading day.",
+                ], "Whenever any sleeve drifts outside a pre-defined band."),
+                ("Which allocation best fits a long-horizon, high-risk-capacity investor?", [
+                    "Higher equity weight with diversified bond/cash sleeves.",
+                    "100% short-duration Treasuries.",
+                    "100% single-stock concentrated.",
+                    "Cash only.",
+                ], "Higher equity weight with diversified bond/cash sleeves."),
+                ("A risk-parity allocation targets:", [
+                    "Equal risk contribution from each sleeve rather than equal dollars.",
+                    "Equal dollar weights regardless of risk.",
+                    "Only equities.",
+                    "Only the highest-volatility asset.",
+                ], "Equal risk contribution from each sleeve rather than equal dollars."),
+                ("Which is the main behavioral risk of abandoning a strategic allocation during a drawdown?", [
+                    "Locking in losses and missing the recovery that strategic allocation was designed to endure.",
+                    "Paying too little in fees.",
+                    "Over-diversifying.",
+                    "Over-concentrating in bonds.",
+                ], "Locking in losses and missing the recovery that strategic allocation was designed to endure."),
+                ("Tactical tilt should come off when:", [
+                    "The evidence that justified the tilt weakens or the bounded time window expires.",
+                    "It becomes more profitable.",
+                    "A news headline appears.",
+                    "Never; tilts are permanent.",
+                ], "The evidence that justified the tilt weakens or the bounded time window expires."),
+                ("A 60/40 portfolio under 30-year horizon should mainly respond to which of the following?", [
+                    "Changes in the investor's goals, horizon, or risk capacity.",
+                    "Daily market moves.",
+                    "Quarterly earnings of a single stock.",
+                    "Weekly fund flows.",
+                ], "Changes in the investor's goals, horizon, or risk capacity."),
+                ("Which statement about 'buckets' allocation is most accurate?", [
+                    "Segmenting capital by purpose/horizon (e.g., liquidity, growth, legacy) helps match each bucket's risk profile to its goal.",
+                    "Bucketing always increases total return.",
+                    "Bucketing eliminates need for rebalancing.",
+                    "Bucketing is required by exchanges.",
+                ], "Segmenting capital by purpose/horizon (e.g., liquidity, growth, legacy) helps match each bucket's risk profile to its goal."),
+                ("A 'glidepath' strategy means:", [
+                    "Gradually reducing equity exposure as the goal horizon approaches.",
+                    "Increasing leverage over time.",
+                    "Picking the highest-momentum stock each year.",
+                    "Holding only one asset class.",
+                ], "Gradually reducing equity exposure as the goal horizon approaches."),
+                ("Why is 'rebalancing is a risk-control tool, not a return-enhancement tool' a useful framing?", [
+                    "Because its primary job is restoring intended risk, with any return benefit secondary and inconsistent.",
+                    "Because rebalancing always loses money.",
+                    "Because rebalancing guarantees higher returns.",
+                    "Because rebalancing removes all risk.",
+                ], "Because its primary job is restoring intended risk, with any return benefit secondary and inconsistent."),
+                ("Portfolio drift most often happens because:", [
+                    "Different sleeves earn different returns, moving weights away from target.",
+                    "Brokers randomly rebalance accounts.",
+                    "Exchanges re-weight portfolios monthly.",
+                    "It is mandated by regulation.",
+                ], "Different sleeves earn different returns, moving weights away from target."),
+                ("An investor says 'I'll rebalance when it feels right.' The biggest risk is:", [
+                    "Emotion overwriting policy, which means the portfolio rebalances in the wrong direction under stress.",
+                    "Rebalancing too frequently.",
+                    "Paying too low taxes.",
+                    "Diversifying too aggressively.",
+                ], "Emotion overwriting policy, which means the portfolio rebalances in the wrong direction under stress."),
+                ("Tax-aware rebalancing often uses which technique?", [
+                    "Directing new contributions or dividends into under-weighted sleeves before selling appreciated lots.",
+                    "Selling only the highest-gain lots.",
+                    "Ignoring tax impact entirely.",
+                    "Refusing to rebalance above 5% drift.",
+                ], "Directing new contributions or dividends into under-weighted sleeves before selling appreciated lots."),
+                ("A student with a 6-month horizon for a car purchase should allocate that capital mostly to:", [
+                    "Cash or short-duration investment-grade instruments.",
+                    "Small-cap equity.",
+                    "Long-duration growth ETFs.",
+                    "Concentrated single names.",
+                ], "Cash or short-duration investment-grade instruments."),
+                ("Which ingredient is most important when setting a strategic allocation?", [
+                    "Matching risk capacity and behavior, not just historical returns.",
+                    "Copying whatever a popular influencer holds.",
+                    "Choosing the mix with the highest trailing return.",
+                    "Picking allocations at random.",
+                ], "Matching risk capacity and behavior, not just historical returns."),
+            ],
         })
     elif "stocks, etfs, and funds" in lower_title:
         plan.update({
@@ -796,17 +1316,277 @@ def _module_teaching_plan(module_title, module_description):
             ],
             "likely_confusion": "Low management fee alone does not guarantee low total implementation cost.",
             "scenario": "You want AI exposure: compare concentrated single-name exposure versus diversified ETF implementation.",
+            "deep_dive_paragraphs": [
+                "Individual stocks deliver full exposure to a specific company's cash flows, governance, and idiosyncratic events. That is a feature when you have an edge on a name and a bug when you don't. ETFs package many stocks into one ticker, trading intraday like equities but offering pooled diversification and typically lower fees than actively managed mutual funds. Mutual funds still dominate employer retirement plans and some active strategies, but their structure (end-of-day NAV execution, potential capital-gain distributions) is usually less efficient than ETFs for taxable accounts.",
+                "Total cost of ownership goes beyond the expense ratio. It includes bid-ask spread on each trade, tracking difference versus benchmark, capital-gain distributions from portfolio turnover, and opportunity cost of cash drag inside the fund. Two 'low-cost' index ETFs can differ by 5–15 bps in realized total cost even with identical management fees. The lower-cost choice compounds ahead over decades.",
+                "Vehicle selection should match the use case: broad beta is almost always best delivered by a large, low-cost, high-volume ETF; sector or thematic exposure often needs a narrower ETF; active strategies should be held in tax-advantaged wrappers when possible. Single-stock picks make sense when you have conviction-level evidence and an explicit sizing rule; otherwise, ETFs deliver the same exposure with lower variance.",
+            ],
+            "worked_example": (
+                "A student wants 'AI exposure.' Option A: buy NVDA at 10% of portfolio. Option B: buy SMH (semi ETF) at 10% of portfolio. Option C: buy QQQ at 10% of portfolio. NVDA gives concentrated single-name exposure (high variance, earnings risk); SMH gives diversified semi exposure (moderate variance); QQQ gives broad large-cap growth including AI names (lower variance). Without firm-specific edge, Option B or C is usually superior for the stated thesis."
+            ),
+            "quiz_bank": [
+                ("Expense ratio is best described as:", [
+                    "The recurring annual fee deducted from the fund's NAV, compounding against net returns.",
+                    "A one-time commission at purchase.",
+                    "The bid-ask spread on the fund.",
+                    "The fund's dividend yield.",
+                ], "The recurring annual fee deducted from the fund's NAV, compounding against net returns."),
+                ("Bid-ask spread represents:", [
+                    "The gap between the best buy price and the best sell price, which is a cost paid per trade.",
+                    "The fund's annual management fee.",
+                    "The difference between open and close price.",
+                    "A tax imposed by the exchange.",
+                ], "The gap between the best buy price and the best sell price, which is a cost paid per trade."),
+                ("Tracking difference measures:", [
+                    "The gap between a fund's actual return and its benchmark's return after costs and frictions.",
+                    "The volatility of the fund's dividends.",
+                    "The size of the fund's cash holdings.",
+                    "The fund's trading volume.",
+                ], "The gap between a fund's actual return and its benchmark's return after costs and frictions."),
+                ("Which statement about ETFs vs mutual funds in taxable accounts is most accurate?", [
+                    "ETFs are generally more tax-efficient because their in-kind creation/redemption mechanism limits realized capital gains.",
+                    "Mutual funds are always more tax-efficient.",
+                    "They are identical in every dimension.",
+                    "ETFs have no tax treatment at all.",
+                ], "ETFs are generally more tax-efficient because their in-kind creation/redemption mechanism limits realized capital gains."),
+                ("A student wants broad US large-cap exposure. The strongest default is typically:", [
+                    "A large, high-volume, low-expense-ratio broad-market ETF.",
+                    "A single mega-cap stock.",
+                    "A leveraged 3x fund.",
+                    "A single-sector thematic ETF.",
+                ], "A large, high-volume, low-expense-ratio broad-market ETF."),
+                ("Which vehicle typically has the highest realized cost of ownership for passive core exposure?", [
+                    "An actively managed mutual fund with high turnover and a high expense ratio.",
+                    "A broad-market ETF.",
+                    "A passive index ETF.",
+                    "A Treasury bill.",
+                ], "An actively managed mutual fund with high turnover and a high expense ratio."),
+                ("Why is AUM (assets under management) relevant to ETF selection?", [
+                    "Higher AUM usually correlates with tighter spreads, better liquidity, and lower closure risk.",
+                    "Higher AUM always means higher fees.",
+                    "AUM determines the fund's dividend policy.",
+                    "AUM is irrelevant to execution costs.",
+                ], "Higher AUM usually correlates with tighter spreads, better liquidity, and lower closure risk."),
+                ("A concentrated single-stock position is most appropriate when:", [
+                    "The investor has firm-specific evidence, explicit sizing rules, and tolerance for idiosyncratic risk.",
+                    "There is no thesis but conviction is high.",
+                    "The stock has risen recently.",
+                    "There is a popular social-media narrative.",
+                ], "The investor has firm-specific evidence, explicit sizing rules, and tolerance for idiosyncratic risk."),
+                ("Leveraged ETFs (e.g., 3x daily) are problematic for long-horizon holders because:", [
+                    "Daily reset causes path-dependent decay in volatile markets.",
+                    "They pay no dividends.",
+                    "They are banned by exchanges.",
+                    "They have zero tracking error.",
+                ], "Daily reset causes path-dependent decay in volatile markets."),
+                ("Which is the most common hidden cost of holding an actively managed fund?", [
+                    "Capital-gain distributions generated by portfolio turnover.",
+                    "Bid-ask spread on NAV.",
+                    "Dividend reinvestment penalties.",
+                    "Regulatory fees paid by investors.",
+                ], "Capital-gain distributions generated by portfolio turnover."),
+                ("A sector ETF differs from a broad-market ETF mainly because:", [
+                    "It deliberately concentrates exposure in one sector, increasing both potential edge and variance.",
+                    "It is more tax-efficient.",
+                    "It has no expense ratio.",
+                    "It is always cheaper to trade.",
+                ], "It deliberately concentrates exposure in one sector, increasing both potential edge and variance."),
+                ("Why is trading volume relevant to ETF implementation?", [
+                    "Higher volume supports tighter bid-ask spreads and better execution for large orders.",
+                    "Higher volume means higher taxes.",
+                    "Volume determines dividend yield.",
+                    "Volume is irrelevant.",
+                ], "Higher volume supports tighter bid-ask spreads and better execution for large orders."),
+                ("Which comparison best illustrates 'total cost of ownership' logic?", [
+                    "A 3-bp ETF with a 1-bp spread can cost more than a 5-bp ETF with a 0.5-bp spread if you trade often.",
+                    "Only expense ratio matters.",
+                    "Bid-ask spread only matters for bonds.",
+                    "Capital-gain distributions are irrelevant.",
+                ], "A 3-bp ETF with a 1-bp spread can cost more than a 5-bp ETF with a 0.5-bp spread if you trade often."),
+                ("A student plans to hold the position for 10 years. Execution-cost logic says:", [
+                    "A small initial spread amortizes over time; expense ratio dominates total cost.",
+                    "Spread dominates over 10 years.",
+                    "Expense ratio is irrelevant for long holds.",
+                    "Taxes matter more than fees.",
+                ], "A small initial spread amortizes over time; expense ratio dominates total cost."),
+                ("An actively managed fund beating its benchmark over three years is best evaluated by:", [
+                    "Checking risk-adjusted return, factor exposure, and repeatability of the process.",
+                    "Looking only at trailing return.",
+                    "Buying immediately regardless of cost.",
+                    "Avoiding any active fund.",
+                ], "Checking risk-adjusted return, factor exposure, and repeatability of the process."),
+                ("Which is a reasonable tactical reason to prefer a single stock over an ETF?", [
+                    "A specific, testable thesis with firm-level evidence and bounded position size.",
+                    "The stock's recent momentum with no fundamental support.",
+                    "A tip from an anonymous online source.",
+                    "Preference for the company's logo.",
+                ], "A specific, testable thesis with firm-level evidence and bounded position size."),
+                ("When a mutual fund makes a large year-end capital-gain distribution, the shareholder:", [
+                    "Receives a taxable event even if they did not sell shares.",
+                    "Earns a guaranteed return equal to the distribution.",
+                    "Owes no taxes under any circumstance.",
+                    "Cannot reinvest the distribution.",
+                ], "Receives a taxable event even if they did not sell shares."),
+                ("Why does QQQ vs VOO vs VTI ownership often overlap heavily?", [
+                    "All three hold most US mega-cap names with overlapping weights.",
+                    "None of them hold US equities.",
+                    "Only VTI owns stocks.",
+                    "They hold entirely different universes.",
+                ], "All three hold most US mega-cap names with overlapping weights."),
+                ("A student wants 'clean technology' exposure. The disciplined step is to:", [
+                    "Compare 2–3 thematic ETFs on holdings, top weights, methodology, and expense ratio before choosing.",
+                    "Pick the ETF with the most catchy name.",
+                    "Buy three clean-tech ETFs at equal weight without checking overlap.",
+                    "Ignore methodology entirely.",
+                ], "Compare 2–3 thematic ETFs on holdings, top weights, methodology, and expense ratio before choosing."),
+                ("'Closet indexer' describes an active fund that:", [
+                    "Closely tracks its benchmark while charging active fees, offering poor value.",
+                    "Is closed to new investors.",
+                    "Only invests in closed-end funds.",
+                    "Has zero expense ratio.",
+                ], "Closely tracks its benchmark while charging active fees, offering poor value."),
+            ],
         })
     elif "fundamental analysis" in lower_title:
         plan.update({
             "hook": "Fundamental analysis asks: what is this business worth, and where is the market likely mispricing it?",
             "core_terms": [
                 ("Revenue quality", "Sustainable growth with sound unit economics beats one-time spikes."),
-                ("Margin structure", "Operating leverage can amplify both upside and downside."),
+                ("Margin structure", "Operating leverage amplifying both upside and downside."),
                 ("Valuation multiple", "Price paid relative to earnings, cash flow, or sales."),
             ],
             "likely_confusion": "Great businesses can still be poor investments when valuation assumptions are stretched.",
             "scenario": "Two firms grow similarly, but one converts cash better with lower leverage. Determine investability and required margin of safety.",
+            "deep_dive_paragraphs": [
+                "Fundamental analysis evaluates a business's ability to generate durable cash flow and the price you pay to own that cash flow. The three primary layers are revenue quality (Is growth durable? Are customers sticky? Are unit economics sound?), margin structure (Does incremental revenue flow to operating profit, or does cost scale in parallel?), and balance-sheet resilience (Can the business survive a downturn without dilutive financing?). Strong analysis integrates all three before forming a view on price.",
+                "Valuation multiples (P/E, EV/EBITDA, EV/Sales, FCF yield) compress a lot of information into one ratio. They are most useful when compared across peers, across the firm's own history, and against expected growth rates. A 30x P/E can be cheap for a compounder growing 25% per year with expanding margins and expensive for a cyclical firm near a margin peak. Use multiples to ask questions, not to declare verdicts.",
+                "Margin of safety is the gap between your estimate of intrinsic value and the price you pay. It exists because estimates are uncertain: demand might be cyclical, margins might compress, competitive dynamics might shift. A disciplined investor only acts when the price-to-value gap is wide enough to absorb reasonable forecasting error, and sizes down (or skips the trade) when it is not.",
+            ],
+            "worked_example": (
+                "Firm A: revenue growth 15%, operating margin 30% (expanding), FCF margin 22%, net cash positive, P/E 28. Firm B: revenue growth 15%, operating margin 10% (flat), FCF margin 4%, net debt 3x EBITDA, P/E 14. Firm B looks cheaper on multiple, but A converts growth to free cash flow and has a resilient balance sheet. After a downside scenario, A's cash flow holds; B's could force dilutive financing. The disciplined buy is often A, despite the headline multiple."
+            ),
+            "quiz_bank": [
+                ("Revenue quality is best evaluated by:", [
+                    "Durability of growth, customer retention, pricing power, and unit economics.",
+                    "Year-over-year revenue change only.",
+                    "Social-media mention count.",
+                    "Analyst sentiment scores alone.",
+                ], "Durability of growth, customer retention, pricing power, and unit economics."),
+                ("A firm's operating margin expanding as revenue grows indicates:", [
+                    "Positive operating leverage: incremental revenue flows through to profit.",
+                    "The firm is over-investing.",
+                    "The firm must be mispriced.",
+                    "Revenue quality is falling.",
+                ], "Positive operating leverage: incremental revenue flows through to profit."),
+                ("FCF (free cash flow) yield measures:", [
+                    "Annual free cash flow divided by market cap (or EV) as a price-to-value proxy.",
+                    "Trailing dividend yield only.",
+                    "Realized return on the stock.",
+                    "Rate of share buybacks.",
+                ], "Annual free cash flow divided by market cap (or EV) as a price-to-value proxy."),
+                ("A high P/E is best interpreted when compared to:", [
+                    "Peers, the firm's own history, and the expected growth rate.",
+                    "The dividend of a bond ETF.",
+                    "The VIX level.",
+                    "Nothing; P/E is absolute.",
+                ], "Peers, the firm's own history, and the expected growth rate."),
+                ("Margin of safety is best described as:", [
+                    "The gap between estimated intrinsic value and current price, buffering forecasting error.",
+                    "A guarantee the investment cannot lose money.",
+                    "The broker's margin requirement.",
+                    "The volatility of the stock.",
+                ], "The gap between estimated intrinsic value and current price, buffering forecasting error."),
+                ("Which statement about unit economics is most accurate?", [
+                    "Profitable unit economics mean each customer generates more lifetime value than the cost to acquire and serve them.",
+                    "Unit economics only matter for consumer firms.",
+                    "Unit economics are the same as gross margin.",
+                    "Unit economics are irrelevant for public companies.",
+                ], "Profitable unit economics mean each customer generates more lifetime value than the cost to acquire and serve them."),
+                ("A net-cash balance sheet is valuable mainly because it:", [
+                    "Allows the firm to survive downturns without dilutive financing or distressed covenants.",
+                    "Guarantees faster growth.",
+                    "Eliminates all competitive risk.",
+                    "Makes taxes lower.",
+                ], "Allows the firm to survive downturns without dilutive financing or distressed covenants."),
+                ("Which is a common valuation pitfall for fast-growing firms?", [
+                    "Using a single trailing P/E without evaluating growth durability and reinvestment needs.",
+                    "Using forward estimates.",
+                    "Using peer comparisons.",
+                    "Using margin analysis.",
+                ], "Using a single trailing P/E without evaluating growth durability and reinvestment needs."),
+                ("A DCF primarily values a firm by:", [
+                    "Discounting projected future cash flows back to present value at a required rate of return.",
+                    "Multiplying last year's revenue by a fixed number.",
+                    "Using only accounting book value.",
+                    "Averaging price targets from analysts.",
+                ], "Discounting projected future cash flows back to present value at a required rate of return."),
+                ("Why is 'margin structure' more informative than a single gross-margin snapshot?", [
+                    "It shows how margins evolve with scale, competition, and mix over time.",
+                    "It only measures cost of goods.",
+                    "It is less informative.",
+                    "It predicts macro regimes.",
+                ], "It shows how margins evolve with scale, competition, and mix over time."),
+                ("An analyst sees revenue up 20% but accounts receivable up 45%. The most disciplined interpretation is:", [
+                    "Possible channel stuffing or aggressive revenue recognition; investigate cash-conversion cycle.",
+                    "Clear evidence of superior growth.",
+                    "Irrelevant because only net income matters.",
+                    "Always a buy signal.",
+                ], "Possible channel stuffing or aggressive revenue recognition; investigate cash-conversion cycle."),
+                ("Which is a common reason a great business is still a poor investment?", [
+                    "The market has already priced in expected growth, leaving no margin of safety.",
+                    "Good businesses are never poor investments.",
+                    "Because the CEO is popular.",
+                    "Because dividends are high.",
+                ], "The market has already priced in expected growth, leaving no margin of safety."),
+                ("A cyclical firm near a record operating margin is risky to value on trailing multiples because:", [
+                    "Margins tend to mean-revert through the cycle, making 'cheap' multiples a value trap.",
+                    "Multiples never mean-revert.",
+                    "Cyclical firms do not have margins.",
+                    "Regulators ban cyclical analysis.",
+                ], "Margins tend to mean-revert through the cycle, making 'cheap' multiples a value trap."),
+                ("Which pair is most consistent with durable compounding?", [
+                    "Expanding margins and consistent reinvestment at high returns on capital.",
+                    "Falling margins and rising capex without reinvestment discipline.",
+                    "Dividend cuts and rising leverage.",
+                    "One-time gains driving revenue.",
+                ], "Expanding margins and consistent reinvestment at high returns on capital."),
+                ("Why is ROIC (return on invested capital) useful for quality assessment?", [
+                    "It measures how well the firm converts capital deployed into economic profit.",
+                    "It is a macro indicator.",
+                    "It equals the dividend yield.",
+                    "It measures only marketing spend.",
+                ], "It measures how well the firm converts capital deployed into economic profit."),
+                ("Share-based compensation (SBC) is best treated in valuation as:", [
+                    "A real cost that dilutes owners, even if added back in non-GAAP metrics.",
+                    "A non-cash item that can be ignored entirely.",
+                    "A bonus return to shareholders.",
+                    "Irrelevant to free cash flow analysis.",
+                ], "A real cost that dilutes owners, even if added back in non-GAAP metrics."),
+                ("A firm with deteriorating FCF despite rising GAAP earnings likely has:", [
+                    "Working-capital or accruals issues that warrant investigation.",
+                    "Perfect fundamentals.",
+                    "A stronger balance sheet.",
+                    "No cost of capital.",
+                ], "Working-capital or accruals issues that warrant investigation."),
+                ("Which is the most reliable reason to raise a valuation estimate?", [
+                    "Durable improvements in revenue quality, margin structure, or capital efficiency.",
+                    "A stock price that has risen recently.",
+                    "A news article calling the stock cheap.",
+                    "Higher social-media sentiment.",
+                ], "Durable improvements in revenue quality, margin structure, or capital efficiency."),
+                ("The 'reversal of the narrative' risk for a high-multiple stock means:", [
+                    "If growth or margin narrative weakens, the multiple and earnings can both compress (double hit).",
+                    "Multiples expand automatically.",
+                    "The stock cannot fall below book value.",
+                    "The dividend cannot be cut.",
+                ], "If growth or margin narrative weakens, the multiple and earnings can both compress (double hit)."),
+                ("A disciplined fundamental thesis includes which of the following?", [
+                    "Clear claim, evidence for revenue/margin/balance sheet, horizon, and invalidation triggers.",
+                    "Only a price target.",
+                    "Only a tip from a forum.",
+                    "Only trailing P/E.",
+                ], "Clear claim, evidence for revenue/margin/balance sheet, horizon, and invalidation triggers."),
+            ],
         })
     elif "technical analysis" in lower_title:
         plan.update({
@@ -818,6 +1598,136 @@ def _module_teaching_plan(module_title, module_description):
             ],
             "likely_confusion": "Students treat chart setups as certainty instead of conditional probability.",
             "scenario": "A stock breaks resistance on strong volume, then retests breakout level. Decide add/hold/exit using invalidation logic.",
+            "deep_dive_paragraphs": [
+                "Technical analysis reads the market's collective behavior through price, volume, and breadth. It does not predict the future; it estimates conditional probabilities. A breakout above resistance on rising volume with confirming breadth is a different setup than a breakout on thin volume. The trader's job is to distinguish high-conviction conditions from noise and size positions accordingly.",
+                "Trend is the directional persistence of price over a chosen horizon. Multi-timeframe trend alignment (daily up, weekly up) strengthens a thesis; conflicting timeframes weaken it. Moving averages (50-day, 200-day) are useful structural landmarks, not magic: price above a rising 200-day is a different regime from price below a falling 200-day, and sizing/risk rules should differ accordingly.",
+                "Support and resistance are zones where supply-demand history has tipped the balance. They work because many market participants reference the same levels, making them partial self-fulfilling. A break of resistance that holds on a retest is higher-probability than a single spike; a break that fails is a common failure mode, and pre-defining the invalidation level (e.g., close back below support) keeps losses bounded.",
+            ],
+            "worked_example": (
+                "A stock trends up above a rising 200-day moving average, pulls back to a clear prior resistance level (now support), and reclaims it on rising volume. Plan: enter at 3% size, stop under the support zone (about -6% away), target a prior swing high (+18%), risk-reward ~1:3. If the retest fails and the stock closes back below support, the stop triggers and the thesis is invalidated. The decision is pre-committed; the outcome does not change whether the plan was well-run."
+            ),
+            "quiz_bank": [
+                ("A 'trend' in technical analysis is best described as:", [
+                    "Directional persistence of price over a chosen horizon with higher highs and higher lows (or vice versa).",
+                    "Any single-day move.",
+                    "The dividend yield.",
+                    "An accounting metric.",
+                ], "Directional persistence of price over a chosen horizon with higher highs and higher lows (or vice versa)."),
+                ("Support and resistance zones work partially because:", [
+                    "Many market participants reference similar levels, making them partially self-fulfilling.",
+                    "They are enforced by exchanges.",
+                    "They are randomly assigned daily.",
+                    "They come from fundamentals only.",
+                ], "Many market participants reference similar levels, making them partially self-fulfilling."),
+                ("A break of resistance on rising volume is typically stronger than one on falling volume because:", [
+                    "Volume confirms participation, raising the conditional probability of follow-through.",
+                    "Falling volume guarantees a reversal.",
+                    "Volume has no relationship to probability.",
+                    "Volume is only relevant for bonds.",
+                ], "Volume confirms participation, raising the conditional probability of follow-through."),
+                ("A 'failed breakout' is best described as:", [
+                    "Price breaking a level and then reversing back inside, often producing sharper moves in the opposite direction.",
+                    "A stock that cannot be sold.",
+                    "A stock that pays no dividend.",
+                    "A stock that only trades at even prices.",
+                ], "Price breaking a level and then reversing back inside, often producing sharper moves in the opposite direction."),
+                ("Moving averages are best used as:", [
+                    "Structural landmarks for trend context, not as magic decision signals.",
+                    "Exact entry triggers with no other confirmation.",
+                    "Volume indicators.",
+                    "Fundamental metrics.",
+                ], "Structural landmarks for trend context, not as magic decision signals."),
+                ("Momentum in this course is:", [
+                    "The strength and persistence of price movement over a chosen horizon.",
+                    "A valuation multiple.",
+                    "A sentiment survey.",
+                    "A Treasury yield.",
+                ], "The strength and persistence of price movement over a chosen horizon."),
+                ("An invalidation level (stop) should be placed where:", [
+                    "Price action would prove the thesis wrong (e.g., break of key support).",
+                    "At the exact entry price.",
+                    "Anywhere that is convenient.",
+                    "It is not necessary.",
+                ], "Price action would prove the thesis wrong (e.g., break of key support)."),
+                ("Multi-timeframe alignment means:", [
+                    "Checking that the trade's direction is consistent on longer and shorter horizons.",
+                    "Using only one timeframe.",
+                    "Trading only on monthly charts.",
+                    "Ignoring timeframes entirely.",
+                ], "Checking that the trade's direction is consistent on longer and shorter horizons."),
+                ("Risk-reward ratio of 1:3 implies the trade:", [
+                    "Risks one unit for a potential three units of gain at planned targets.",
+                    "Has zero risk.",
+                    "Cannot lose more than 30%.",
+                    "Is guaranteed to succeed.",
+                ], "Risks one unit for a potential three units of gain at planned targets."),
+                ("Which statement about chart patterns is most accurate?", [
+                    "They are conditional probabilities, not certainties, and should be sized accordingly.",
+                    "They always play out exactly as drawn.",
+                    "They are random and useless.",
+                    "They replace the need for a stop.",
+                ], "They are conditional probabilities, not certainties, and should be sized accordingly."),
+                ("Breadth (e.g., advance-decline line) is useful because:", [
+                    "It shows whether a trend is broad-based or driven by a narrow group of leaders.",
+                    "It determines fees.",
+                    "It measures dividends.",
+                    "It is irrelevant to trends.",
+                ], "It shows whether a trend is broad-based or driven by a narrow group of leaders."),
+                ("A pullback to a prior breakout level that holds on reduced volume is best interpreted as:", [
+                    "A potential continuation setup if volume reappears on the next leg up.",
+                    "A guaranteed reversal.",
+                    "Unrelated to trend health.",
+                    "Only relevant for mutual funds.",
+                ], "A potential continuation setup if volume reappears on the next leg up."),
+                ("RSI (relative strength index) is commonly used to:", [
+                    "Gauge short-term momentum extremes and potential mean-reversion pressure.",
+                    "Measure dividend yield.",
+                    "Calculate operating margin.",
+                    "Replace stop placement.",
+                ], "Gauge short-term momentum extremes and potential mean-reversion pressure."),
+                ("A 'trend follower' tends to:", [
+                    "Buy strength and cut weakness, with defined invalidation and position sizing.",
+                    "Always buy the biggest loser.",
+                    "Ignore trends.",
+                    "Hold only cash.",
+                ], "Buy strength and cut weakness, with defined invalidation and position sizing."),
+                ("Technical analysis should typically be combined with:", [
+                    "Fundamentals and risk management to form a complete decision.",
+                    "Social-media tips only.",
+                    "Dividend yield only.",
+                    "Nothing; it stands alone.",
+                ], "Fundamentals and risk management to form a complete decision."),
+                ("The main risk of technical setups during news events is:", [
+                    "Exogenous information can override the pattern, producing sharp, gap-level invalidations.",
+                    "Volume drops to zero.",
+                    "Technical patterns are illegal during news.",
+                    "Patterns always complete faster.",
+                ], "Exogenous information can override the pattern, producing sharp, gap-level invalidations."),
+                ("'Volume precedes price' is best interpreted as:", [
+                    "A rise in participation often signals conviction that supports subsequent price moves.",
+                    "Volume always happens after price.",
+                    "Volume has no relationship to conviction.",
+                    "Only price matters in setups.",
+                ], "A rise in participation often signals conviction that supports subsequent price moves."),
+                ("A gap up on earnings that closes below the prior day's high is often:", [
+                    "A failed continuation setup warranting caution or tighter risk.",
+                    "A guaranteed buy.",
+                    "Irrelevant to technicals.",
+                    "A signal to double position size.",
+                ], "A failed continuation setup warranting caution or tighter risk."),
+                ("Which is the most common technical mistake for new traders?", [
+                    "Treating patterns as certainties and ignoring invalidation and position sizing.",
+                    "Using multiple timeframes.",
+                    "Checking breadth.",
+                    "Using a stop-loss.",
+                ], "Treating patterns as certainties and ignoring invalidation and position sizing."),
+                ("A disciplined technical trade plan includes:", [
+                    "Entry, stop, target, position size, horizon, and invalidation evidence.",
+                    "Entry price only.",
+                    "Target only.",
+                    "Social-media confirmation only.",
+                ], "Entry, stop, target, position size, horizon, and invalidation evidence."),
+            ],
         })
     elif "behavioral finance" in lower_title:
         plan.update({
@@ -829,6 +1739,136 @@ def _module_teaching_plan(module_title, module_description):
             ],
             "likely_confusion": "Biases do not disappear with experience; in many cases they become more subtle.",
             "scenario": "You keep averaging down to 'get back to even.' Diagnose the bias and design a stronger pre-commitment rule.",
+            "deep_dive_paragraphs": [
+                "Behavioral finance studies the systematic ways human decisions deviate from rational analysis under uncertainty. The goal is not to 'remove emotion' (impossible) but to build rules and environments that make good behavior the default under stress. A trading log, pre-committed stops, position-size caps, and scheduled review cadence all function as behavioral scaffolding.",
+                "Loss aversion makes a given loss feel roughly twice as painful as an equivalent gain feels good. This asymmetry drives several documented behaviors: holding losers too long (to avoid realizing loss), selling winners too early (to lock in gain), and taking excessive risk to 'get even.' The countermeasure is to make entry, exit, and sizing rules mechanical and visible so the pain of loss is not negotiated in real time.",
+                "Recency and confirmation bias corrupt the information stream. Recent outcomes feel more representative than they are, and we unconsciously filter new evidence to protect prior conclusions. Disciplined investors counter this by seeking disconfirming evidence explicitly, tracking base rates, and writing a thesis in advance so post-hoc rationalization becomes easier to detect.",
+            ],
+            "worked_example": (
+                "A student loses 8% on a position and feels pressured to double down to 'get back to even.' Behavioral diagnosis: loss aversion plus sunk-cost fallacy. Pre-committed rule (written before entry): 'I only add to winners above the 50-day moving average with fundamental improvement; I never add to a position below its stop level.' Applying the rule: student does not average down; trims per plan and redeploys capital into a setup that currently meets criteria. Process is preserved; emotional damage does not compound."
+            ),
+            "quiz_bank": [
+                ("Loss aversion describes the tendency to:", [
+                    "Feel the pain of losses roughly twice as strongly as the pleasure of equivalent gains.",
+                    "Treat all outcomes symmetrically.",
+                    "Avoid all risk at all times.",
+                    "Always choose the highest expected return.",
+                ], "Feel the pain of losses roughly twice as strongly as the pleasure of equivalent gains."),
+                ("Recency bias is best defined as:", [
+                    "Overweighting recent events when forming expectations about the future.",
+                    "Weighting all history equally.",
+                    "Ignoring recent events entirely.",
+                    "A bias specific to bond traders.",
+                ], "Overweighting recent events when forming expectations about the future."),
+                ("Confirmation bias causes investors to:", [
+                    "Seek information that supports their existing view and discount information that contradicts it.",
+                    "Always seek disconfirming evidence.",
+                    "Reject every news source.",
+                    "Never read research.",
+                ], "Seek information that supports their existing view and discount information that contradicts it."),
+                ("The strongest counter-measure to emotional decision making is:", [
+                    "Pre-committed written rules applied mechanically under stress.",
+                    "Meditation alone.",
+                    "Ignoring the market entirely.",
+                    "Trusting instinct in the moment.",
+                ], "Pre-committed written rules applied mechanically under stress."),
+                ("Anchoring bias describes:", [
+                    "Over-weighting an initial reference point (e.g., purchase price) in subsequent decisions.",
+                    "Investing only in marine industries.",
+                    "Using only forward estimates.",
+                    "Never using base rates.",
+                ], "Over-weighting an initial reference point (e.g., purchase price) in subsequent decisions."),
+                ("Overconfidence typically shows up as:", [
+                    "Excess position sizing, over-trading, and underestimation of uncertainty.",
+                    "Under-allocating to equities.",
+                    "Refusing to place any trade.",
+                    "Always holding cash.",
+                ], "Excess position sizing, over-trading, and underestimation of uncertainty."),
+                ("The disposition effect is:", [
+                    "Selling winners too early and holding losers too long.",
+                    "Selling losers too early and holding winners too long.",
+                    "Holding cash in all conditions.",
+                    "Trading only bonds.",
+                ], "Selling winners too early and holding losers too long."),
+                ("'Sunk cost fallacy' in investing means:", [
+                    "Holding or adding to a position because of past costs rather than current evidence.",
+                    "Ignoring all past costs.",
+                    "Selling all losers immediately.",
+                    "Ignoring transaction costs.",
+                ], "Holding or adding to a position because of past costs rather than current evidence."),
+                ("Averaging down to 'get back to even' is most often a symptom of:", [
+                    "Loss aversion combined with sunk-cost fallacy.",
+                    "Disciplined process.",
+                    "Correct risk management.",
+                    "Strong fundamental analysis.",
+                ], "Loss aversion combined with sunk-cost fallacy."),
+                ("A trading log improves decision quality mainly because it:", [
+                    "Creates an objective record that reveals patterns the memory edits out.",
+                    "Guarantees profits.",
+                    "Replaces a broker.",
+                    "Reduces taxes.",
+                ], "Creates an objective record that reveals patterns the memory edits out."),
+                ("Pre-mortem analysis asks the investor to:", [
+                    "Imagine the trade has failed and identify what went wrong before placing it.",
+                    "Never review trades after the fact.",
+                    "Analyze only winning trades.",
+                    "Ignore downside scenarios.",
+                ], "Imagine the trade has failed and identify what went wrong before placing it."),
+                ("Which is the most durable bias mitigation?", [
+                    "Written rules, checklists, and environment design that prevent in-the-moment negotiation.",
+                    "Trying harder to be rational.",
+                    "Using a larger monitor.",
+                    "Avoiding all reading.",
+                ], "Written rules, checklists, and environment design that prevent in-the-moment negotiation."),
+                ("Herding in markets describes:", [
+                    "Following the crowd rather than independent analysis, often chasing performance.",
+                    "Owning livestock companies.",
+                    "Diversifying into 10 ETFs.",
+                    "Using only momentum strategies.",
+                ], "Following the crowd rather than independent analysis, often chasing performance."),
+                ("Availability bias is:", [
+                    "Overweighting information that is easy to recall (e.g., vivid news) versus base rates.",
+                    "Always available information.",
+                    "A technical indicator.",
+                    "A bond rating.",
+                ], "Overweighting information that is easy to recall (e.g., vivid news) versus base rates."),
+                ("Which statement about experience and bias is most accurate?", [
+                    "Biases do not disappear with experience and often become subtler and harder to detect.",
+                    "Biases disappear after 10 trades.",
+                    "Experience guarantees bias-free decisions.",
+                    "Biases only affect beginners.",
+                ], "Biases do not disappear with experience and often become subtler and harder to detect."),
+                ("A strong debiasing habit for new investors is to:", [
+                    "Write down thesis, evidence, size, and invalidation before every trade and review them after.",
+                    "Trade larger size to overcome hesitation.",
+                    "Trade only on tips.",
+                    "Avoid all written records.",
+                ], "Write down thesis, evidence, size, and invalidation before every trade and review them after."),
+                ("'Narrative bias' refers to:", [
+                    "Weighting a compelling story over evidence and base rates.",
+                    "Preferring nonfiction investment books.",
+                    "Using only quantitative signals.",
+                    "Ignoring quarterly reports.",
+                ], "Weighting a compelling story over evidence and base rates."),
+                ("Overtrading often increases:", [
+                    "Transaction costs, taxes, and behavioral errors without improving expected return.",
+                    "Risk-adjusted return.",
+                    "Diversification benefit.",
+                    "Compound return.",
+                ], "Transaction costs, taxes, and behavioral errors without improving expected return."),
+                ("Which is the best outcome of a disciplined post-trade review?", [
+                    "Identifying process gaps distinct from outcome noise and encoding one concrete upgrade.",
+                    "Celebrating only wins.",
+                    "Ignoring losses.",
+                    "Adjusting rules after every single trade regardless of evidence.",
+                ], "Identifying process gaps distinct from outcome noise and encoding one concrete upgrade."),
+                ("A commitment device in investing is:", [
+                    "A structural mechanism (automatic rebalancing, stop orders, position-size caps) that enforces intended behavior.",
+                    "A discretionary override.",
+                    "A news subscription.",
+                    "A margin loan.",
+                ], "A structural mechanism (automatic rebalancing, stop orders, position-size caps) that enforces intended behavior."),
+            ],
         })
     elif "portfolio construction" in lower_title:
         plan.update({
@@ -840,6 +1880,136 @@ def _module_teaching_plan(module_title, module_description):
             ],
             "likely_confusion": "Students optimize entry timing but ignore cross-position correlation and portfolio-level risk.",
             "scenario": "You have five strong ideas but only enough risk budget for two full positions and three starter positions.",
+            "deep_dive_paragraphs": [
+                "Portfolio construction is the translation of ideas into sized, risk-bounded positions that interact sensibly. A portfolio is not a list of favorite stocks; it is a system whose volatility, drawdown potential, and factor exposures should be consistent with the investor's plan. Strong construction ensures that no single position—or correlated group of positions—can produce a portfolio-level loss larger than planned.",
+                "Position sizing should scale with conviction and inverse to downside. A standard framework: starter positions for new or lower-conviction ideas (~2–3% of portfolio), core positions for confirmed ideas with defined invalidation (~4–6%), and full positions for highest-conviction, risk-bounded ideas (~7–10% with caps). Beyond roughly 10%, single-position risk dominates portfolio outcomes and requires explicit rationale.",
+                "Risk budgeting sets the total volatility or drawdown the plan can absorb, then allocates it across ideas by expected contribution. Rebalancing mechanically keeps drift from concentrating risk—especially after winners appreciate or losers shrink. The interaction: when correlations rise across positions, real portfolio risk is higher than the sum of single-name risks, and sizes should come down.",
+            ],
+            "worked_example": (
+                "Five ideas (A–E). Conviction: A, B high; C medium; D, E starter. Planned sizing: A=8%, B=8%, C=5%, D=3%, E=3% (total 27% active; rest in core beta). Correlation check: A and B are both semi names with ~0.85 correlation; combined risk is larger than sum of independent. Adjustment: trim A and B to 6% each so that combined single-factor exposure stays within planned cap; use freed 4% to fund C or a defensive sleeve. Construction changes the plan without diluting the ideas."
+            ),
+            "quiz_bank": [
+                ("Position sizing in this course should primarily scale with:", [
+                    "Conviction and downside, with explicit caps at the individual and factor level.",
+                    "Recent price momentum only.",
+                    "Number of analyst ratings.",
+                    "Size of the ticker.",
+                ], "Conviction and downside, with explicit caps at the individual and factor level."),
+                ("A 'risk budget' for a portfolio is best described as:", [
+                    "The total volatility or drawdown the plan is willing to absorb, allocated across positions.",
+                    "The number of trades allowed per week.",
+                    "The fund's expense ratio.",
+                    "The dividend yield.",
+                ], "The total volatility or drawdown the plan is willing to absorb, allocated across positions."),
+                ("Rebalancing serves which primary purpose in portfolio construction?", [
+                    "Keeping realized risk close to planned risk by controlling drift and concentration.",
+                    "Maximizing turnover and fees.",
+                    "Forcing losers into winners.",
+                    "Guaranteeing higher returns.",
+                ], "Keeping realized risk close to planned risk by controlling drift and concentration."),
+                ("Which is a sensible starter-position size for a lower-conviction idea?", [
+                    "About 2–3% of portfolio.",
+                    "20% of portfolio.",
+                    "40% of portfolio.",
+                    "80% of portfolio.",
+                ], "About 2–3% of portfolio."),
+                ("Why do highly correlated positions require smaller individual sizing than their conviction suggests?", [
+                    "Because combined factor exposure makes portfolio risk larger than the sum of independent single-name risks.",
+                    "Because correlations are always stable.",
+                    "Because the exchange requires it.",
+                    "Because they cannot be sold.",
+                ], "Because combined factor exposure makes portfolio risk larger than the sum of independent single-name risks."),
+                ("Which portfolio structure is most brittle under stress?", [
+                    "Concentrated in a single factor with no diversifying sleeve and no pre-committed invalidation.",
+                    "Diversified across factors with defined sizing and stops.",
+                    "Risk-parity weighted.",
+                    "Equal-weighted across sectors.",
+                ], "Concentrated in a single factor with no diversifying sleeve and no pre-committed invalidation."),
+                ("A 'core-satellite' construction typically means:", [
+                    "Holding broad low-cost beta as the core and layering smaller active tilts as satellites.",
+                    "Holding only single stocks.",
+                    "Holding only bonds.",
+                    "Holding only cash.",
+                ], "Holding broad low-cost beta as the core and layering smaller active tilts as satellites."),
+                ("Single-position caps exist because:", [
+                    "They bound the damage any one idea can do to portfolio-level outcomes.",
+                    "They maximize turnover.",
+                    "They guarantee alpha.",
+                    "They are mandated by exchanges.",
+                ], "They bound the damage any one idea can do to portfolio-level outcomes."),
+                ("An investor with a 15% max drawdown tolerance should typically:", [
+                    "Cap single-name positions and avoid concentration in a single factor.",
+                    "Hold only leveraged ETFs.",
+                    "Concentrate into the best performer.",
+                    "Ignore drawdown entirely.",
+                ], "Cap single-name positions and avoid concentration in a single factor."),
+                ("Which metric most directly measures concentration risk?", [
+                    "Sum of top-3 (or top-5) position weights.",
+                    "Annual dividend yield.",
+                    "Number of ETFs owned.",
+                    "Rolling 30-day return.",
+                ], "Sum of top-3 (or top-5) position weights."),
+                ("Why do winners need active trimming under disciplined construction?", [
+                    "Appreciation silently raises portfolio risk beyond the originally accepted size.",
+                    "Winners always continue winning.",
+                    "Trimming reduces total fees.",
+                    "Trimming is required by exchanges.",
+                ], "Appreciation silently raises portfolio risk beyond the originally accepted size."),
+                ("A 'volatility target' portfolio typically:", [
+                    "Adjusts exposure up or down to keep portfolio volatility near a chosen level.",
+                    "Holds fixed dollar exposure forever.",
+                    "Uses only leveraged ETFs.",
+                    "Never adjusts exposure.",
+                ], "Adjusts exposure up or down to keep portfolio volatility near a chosen level."),
+                ("Which is the main danger of sizing by conviction alone (ignoring downside)?", [
+                    "A single high-conviction idea with large downside can cause outsized portfolio damage.",
+                    "It always underperforms.",
+                    "It increases fees.",
+                    "It is banned by brokers.",
+                ], "A single high-conviction idea with large downside can cause outsized portfolio damage."),
+                ("When adding a new position, construction discipline requires:", [
+                    "Checking impact on portfolio factor exposures, correlations, and total risk.",
+                    "Only checking the new position's expected return.",
+                    "Only checking the broker's fee.",
+                    "Ignoring portfolio-level impact.",
+                ], "Checking impact on portfolio factor exposures, correlations, and total risk."),
+                ("A 'risk-parity' construction targets:", [
+                    "Equal risk contribution from each sleeve rather than equal dollar weight.",
+                    "Equal dollars regardless of risk.",
+                    "100% in the highest-volatility asset.",
+                    "Only Treasuries.",
+                ], "Equal risk contribution from each sleeve rather than equal dollar weight."),
+                ("Why is 'invalidation before entry' a construction principle, not just a trading tactic?", [
+                    "It bounds the portfolio-level loss each position can inflict and forces honest sizing.",
+                    "It maximizes turnover.",
+                    "It guarantees profit.",
+                    "It is only relevant to options.",
+                ], "It bounds the portfolio-level loss each position can inflict and forces honest sizing."),
+                ("A 5-position portfolio that is 90% tech is best described as:", [
+                    "A concentrated single-factor bet, not a diversified portfolio.",
+                    "A risk-parity portfolio.",
+                    "A Treasury-heavy mix.",
+                    "A defensive dividend portfolio.",
+                ], "A concentrated single-factor bet, not a diversified portfolio."),
+                ("Cash in portfolio construction is usefully framed as:", [
+                    "Optionality: the ability to act when better risk-adjusted setups appear.",
+                    "Pure drag that should always be zero.",
+                    "A dividend-paying asset.",
+                    "A leveraged asset.",
+                ], "Optionality: the ability to act when better risk-adjusted setups appear."),
+                ("'Drawdown control' construction typically uses which combination?", [
+                    "Position-size caps, factor diversification, and pre-committed exit rules.",
+                    "Leverage, concentration, and discretionary overrides.",
+                    "No rules; pure discretion.",
+                    "Only sector rotation.",
+                ], "Position-size caps, factor diversification, and pre-committed exit rules."),
+                ("Which metric best summarizes 'how well the portfolio was constructed' at the total level?", [
+                    "Risk-adjusted return combined with realized drawdown relative to plan.",
+                    "Number of trades.",
+                    "Weekly change in volatility index.",
+                    "Total dividend received.",
+                ], "Risk-adjusted return combined with realized drawdown relative to plan."),
+            ],
         })
     elif "market events" in lower_title or "macroeconomics" in lower_title:
         plan.update({
@@ -851,6 +2021,136 @@ def _module_teaching_plan(module_title, module_description):
             ],
             "likely_confusion": "Students either ignore macro completely or overreact to every headline.",
             "scenario": "A hot inflation print lifts yields quickly. Identify vulnerable holdings and response actions without panic-trading.",
+            "deep_dive_paragraphs": [
+                "Macro provides the weather in which every portfolio operates. Rates, inflation, growth, and liquidity conditions shift which assets compound easily and which struggle. The goal is not to predict the next release; it is to understand which environments favor which holdings and to plan your response to a few plausible paths before they happen. Well-constructed portfolios survive multiple regimes; brittle ones only work in one.",
+                "Interest rates are the single most important macro variable for long-duration assets. A growth stock whose value comes from cash flows far in the future is more sensitive to discount-rate changes than a utility whose cash flows are near-term. The same rate move can compress or expand valuation multiples across the market, often more than underlying earnings changes. Understanding duration at the portfolio level is as important as understanding duration in bonds.",
+                "Scenario planning replaces reaction with preparation. A disciplined approach names 3–4 plausible regimes (disinflation with soft landing, sticky inflation with rate pressure, recession with rate cuts, growth re-acceleration), lists the winning and losing asset groups in each, and defines the first portfolio move if evidence confirms one regime is more likely. When the scenario arrives, the response is already scripted.",
+            ],
+            "worked_example": (
+                "A portfolio is 70% US large-cap growth with ~2.5% fixed-income hedge. Hot CPI print lifts 10Y yields 30 bps in two days. Pre-planned scenario A (sticky inflation) response: trim the highest-duration sleeve by ~10%, rotate ~5% of capital into an energy/materials sleeve that tends to outperform in that regime, keep stop rules on individual names. The student does not predict inflation; they execute the prepared response. The move is bounded, reversible if evidence weakens, and avoids the panic-trade alternative."
+            ),
+            "quiz_bank": [
+                ("Which macro variable most directly affects the valuation of long-duration growth equities?", [
+                    "The level and path of real interest rates.",
+                    "The dividend yield on consumer staples.",
+                    "Weekly options volume.",
+                    "The number of IPOs last month.",
+                ], "The level and path of real interest rates."),
+                ("Sticky inflation typically pressures which asset group most?", [
+                    "Long-duration growth equities and long-duration Treasuries.",
+                    "Short-duration Treasuries and commodities.",
+                    "Energy equities.",
+                    "Bank deposits.",
+                ], "Long-duration growth equities and long-duration Treasuries."),
+                ("Scenario planning in this course is best described as:", [
+                    "Pre-defining plausible regimes and the portfolio responses before they occur.",
+                    "Predicting the exact next release.",
+                    "Reacting only to today's headlines.",
+                    "Ignoring macro entirely.",
+                ], "Pre-defining plausible regimes and the portfolio responses before they occur."),
+                ("An inverted yield curve (2Y above 10Y) has historically been associated with:", [
+                    "Elevated recession probability over the following 12–24 months.",
+                    "Immediate market tops.",
+                    "Guaranteed market rallies.",
+                    "No macro information.",
+                ], "Elevated recession probability over the following 12–24 months."),
+                ("Commodities (e.g., energy, materials) often outperform when:", [
+                    "Inflation is sticky and real rates are low or falling.",
+                    "Growth is high and inflation is falling.",
+                    "Rates are at zero and disinflation persists.",
+                    "All equities are rallying.",
+                ], "Inflation is sticky and real rates are low or falling."),
+                ("The Fed raising short rates is most likely to:", [
+                    "Pressure rate-sensitive and long-duration equity and bond prices, at least initially.",
+                    "Guarantee higher equity returns.",
+                    "Have no effect on valuation multiples.",
+                    "Only affect emerging markets.",
+                ], "Pressure rate-sensitive and long-duration equity and bond prices, at least initially."),
+                ("A 'soft landing' macro regime typically means:", [
+                    "Inflation cools toward target without a severe recession and rates can be held or cut gradually.",
+                    "Inflation spirals and rates are raised aggressively.",
+                    "A crash in equities over three months.",
+                    "No change in any variable.",
+                ], "Inflation cools toward target without a severe recession and rates can be held or cut gradually."),
+                ("Duration risk in a bond portfolio describes:", [
+                    "Sensitivity of bond prices to changes in interest rates.",
+                    "Trading volume of the bond.",
+                    "Dividend schedule.",
+                    "Coupon payment date.",
+                ], "Sensitivity of bond prices to changes in interest rates."),
+                ("During a clear recession regime, investors often rotate toward:", [
+                    "Defensives, quality balance sheets, and higher-grade fixed income.",
+                    "High-beta small-caps exclusively.",
+                    "Leveraged growth ETFs.",
+                    "Pure cash with no rebalancing.",
+                ], "Defensives, quality balance sheets, and higher-grade fixed income."),
+                ("A disciplined response to a hot CPI surprise is to:", [
+                    "Execute a pre-planned scenario response with bounded size, not a reactive discretionary trade.",
+                    "Sell all equities immediately.",
+                    "Double growth exposure.",
+                    "Ignore macro entirely.",
+                ], "Execute a pre-planned scenario response with bounded size, not a reactive discretionary trade."),
+                ("Which asset is most commonly used as a stagflation-era hedge?", [
+                    "Energy or broad commodity exposure.",
+                    "Long-duration zero-coupon Treasuries.",
+                    "Unhedged cash.",
+                    "High-yield debt.",
+                ], "Energy or broad commodity exposure."),
+                ("Why is portfolio duration a useful macro lens?", [
+                    "It summarizes how sensitive overall portfolio value is to a change in discount rates.",
+                    "It measures dividend yield.",
+                    "It replaces diversification.",
+                    "It is only relevant to options.",
+                ], "It summarizes how sensitive overall portfolio value is to a change in discount rates."),
+                ("Geopolitical events create portfolio risk primarily through:", [
+                    "Volatility spikes, liquidity stress, and sector-level dispersion (energy, defense, shipping).",
+                    "Universal rally in all assets.",
+                    "Permanent erasure of diversification benefit.",
+                    "Predictable 10% moves.",
+                ], "Volatility spikes, liquidity stress, and sector-level dispersion (energy, defense, shipping)."),
+                ("Pre-defined 'first actions' for scenarios reduce:", [
+                    "Behavioral error by removing in-the-moment discretion under stress.",
+                    "Returns in calm markets.",
+                    "Overall dividend yield.",
+                    "Fund expense ratios.",
+                ], "Behavioral error by removing in-the-moment discretion under stress."),
+                ("An earnings season with multiple guide-downs typically signals:", [
+                    "Emerging fundamental weakness that may extend beyond a single sector.",
+                    "Guaranteed bull market.",
+                    "Permanent margin compression in all stocks.",
+                    "No macro signal at all.",
+                ], "Emerging fundamental weakness that may extend beyond a single sector."),
+                ("A diversifying sleeve in a macro-aware portfolio typically contains:", [
+                    "Assets whose drivers differ from the core (e.g., short-duration bonds, commodities, cash).",
+                    "Only more US large-cap growth names.",
+                    "Triple-leveraged ETFs.",
+                    "A single-sector ETF.",
+                ], "Assets whose drivers differ from the core (e.g., short-duration bonds, commodities, cash)."),
+                ("'Macro overrides micro' is a principle most useful when:", [
+                    "A regime change is clearly underway and most individual stock setups are swamped by broad factor moves.",
+                    "Nothing is changing.",
+                    "Single-name earnings are the only driver.",
+                    "Macro variables are flat.",
+                ], "A regime change is clearly underway and most individual stock setups are swamped by broad factor moves."),
+                ("Why is reading the yield curve useful for multi-asset portfolios?", [
+                    "It reflects market expectations of growth, inflation, and policy paths simultaneously.",
+                    "It predicts the next day's single-stock move.",
+                    "It measures credit quality only.",
+                    "It has no market information.",
+                ], "It reflects market expectations of growth, inflation, and policy paths simultaneously."),
+                ("During a severe liquidity event, the most durable portfolio behavior is to:", [
+                    "Execute pre-planned rebalancing and risk rules rather than liquidate at the worst prices.",
+                    "Abandon the plan and sell whatever is liquid.",
+                    "Triple equity exposure.",
+                    "Ignore the event entirely.",
+                ], "Execute pre-planned rebalancing and risk rules rather than liquidate at the worst prices."),
+                ("A strong end-of-course macro habit is to:", [
+                    "Write and rehearse 3–4 scenario playbooks and review them quarterly as conditions evolve.",
+                    "Predict the single most likely macro outcome and commit fully.",
+                    "Avoid reading any macro data.",
+                    "Trade every CPI release.",
+                ], "Write and rehearse 3–4 scenario playbooks and review them quarterly as conditions evolve."),
+            ],
         })
 
     return plan
@@ -1072,74 +2372,137 @@ def _expand_legacy_assignment_content(module_title, assignment_type, content_jso
     return _assignment_content_for_module(module_title)
 
 
+_GENERIC_QUIZ_BANK = [
+    ("Which statement best reflects durable decision quality?", [
+        "Judge decisions by process quality and evidence, not just outcome.",
+        "Chase the highest recent return with full size.",
+        "Avoid benchmarks because they reduce confidence.",
+        "Rebuild your rules after each trade outcome.",
+    ], "Judge decisions by process quality and evidence, not just outcome."),
+    ("Expected return is best described as:", [
+        "A probability-based estimate rather than a certainty.",
+        "The same as last month's realized return.",
+        "An outcome guaranteed by the broker.",
+        "Only relevant for short-term traders.",
+    ], "A probability-based estimate rather than a certainty."),
+    ("Why is documenting an invalidation rule before entry important?", [
+        "It prevents post-hoc rationalization and improves risk discipline.",
+        "It guarantees every trade will be profitable.",
+        "It removes the need for position sizing.",
+        "It replaces the need for a thesis.",
+    ], "It prevents post-hoc rationalization and improves risk discipline."),
+    ("If your portfolio returned 6% and benchmark returned 4%, excess return is:", ["2%", "10%", "-2%", "4%"], "2%"),
+    ("Contribution to return is best interpreted as:", [
+        "How much each position added/subtracted to total portfolio return.",
+        "The number of trades placed during the week.",
+        "Only the return of your largest holding.",
+        "A measure that ignores position weights.",
+    ], "How much each position added/subtracted to total portfolio return."),
+    ("A portfolio has top-3 weights of 18%, 16%, and 11%. Top-3 concentration is:", ["45%", "29%", "18%", "11%"], "45%"),
+    ("Which response best demonstrates high-quality trade review?", [
+        "Compare thesis vs outcome, identify process gaps, and define one concrete upgrade.",
+        "Focus only on P&L and skip risk analysis.",
+        "Blame market noise for all underperformance.",
+        "Double size after any winning trade.",
+    ], "Compare thesis vs outcome, identify process gaps, and define one concrete upgrade."),
+    ("Which is the best benchmark selection principle?", [
+        "Use a benchmark aligned to your portfolio's primary exposure.",
+        "Always use cash as the benchmark.",
+        "Use the highest returning ETF each week.",
+        "Never use benchmarks for concentrated portfolios.",
+    ], "Use a benchmark aligned to your portfolio's primary exposure."),
+    ("Which is the most disciplined first action after a strong week?", [
+        "Re-check thesis evidence and position limits before increasing risk.",
+        "Increase every position equally to avoid regret.",
+        "Ignore valuation and focus only on momentum.",
+        "Wait for social confirmation before deciding.",
+    ], "Re-check thesis evidence and position limits before increasing risk."),
+    ("Process quality is most visible in which artifact?", [
+        "A written thesis, sizing rule, and invalidation point recorded before execution.",
+        "A post-hoc explanation of why the trade 'had to work'.",
+        "A single price target with no horizon.",
+        "Social-media sentiment scores.",
+    ], "A written thesis, sizing rule, and invalidation point recorded before execution."),
+    ("Position weight is defined as:", [
+        "Position market value divided by total portfolio value.",
+        "Number of shares held.",
+        "Dividend yield of the position.",
+        "Beta of the position.",
+    ], "Position market value divided by total portfolio value."),
+    ("A disciplined investor's horizon determines:", [
+        "How much volatility can be tolerated on the way to the objective.",
+        "Tax rate on long-term gains.",
+        "Exchange trading hours.",
+        "Nothing relevant to decisions.",
+    ], "How much volatility can be tolerated on the way to the objective."),
+    ("Which is the best use of a trade log?", [
+        "An objective record of decisions that reveals behavioral and analytical patterns over time.",
+        "A collection of wins only.",
+        "An empty notebook.",
+        "A replacement for the broker statement.",
+    ], "An objective record of decisions that reveals behavioral and analytical patterns over time."),
+    ("Excess return over a benchmark is most fairly interpreted when:", [
+        "Compared against the benchmark that matches the portfolio's exposure and horizon.",
+        "Measured against cash only.",
+        "Measured against yesterday's close.",
+        "Measured against a leveraged ETF.",
+    ], "Compared against the benchmark that matches the portfolio's exposure and horizon."),
+    ("Which behavior most undermines risk-adjusted return?", [
+        "Panic-selling during drawdowns without a pre-committed rule.",
+        "Rebalancing to target weights.",
+        "Tracking a process journal.",
+        "Using broad low-cost ETFs.",
+    ], "Panic-selling during drawdowns without a pre-committed rule."),
+    ("Why are correlations less reliable in crises?", [
+        "Risk-asset correlations often rise toward +1, reducing diversification exactly when it is most needed.",
+        "Correlations fall to zero in crises.",
+        "Crises have no effect on correlations.",
+        "Correlations are computed only for bonds.",
+    ], "Risk-asset correlations often rise toward +1, reducing diversification exactly when it is most needed."),
+    ("A 'starter position' sizing convention is typically:", [
+        "Around 2–3% of the portfolio for lower-conviction ideas that still merit exposure.",
+        "40% of the portfolio.",
+        "Exactly 10% of the portfolio always.",
+        "The entire portfolio.",
+    ], "Around 2–3% of the portfolio for lower-conviction ideas that still merit exposure."),
+    ("A position size of 5% on a stock with a 20% expected drawdown implies:", [
+        "About a 1% portfolio-level impact in that drawdown, all else equal.",
+        "A 5% portfolio-level loss.",
+        "A 20% portfolio-level loss.",
+        "Zero portfolio-level impact.",
+    ], "About a 1% portfolio-level impact in that drawdown, all else equal."),
+    ("Which pair best captures 'discipline' in this course?", [
+        "Pre-committed rules plus honest post-trade review.",
+        "Rapid turnover plus high conviction.",
+        "Social-media signals plus leverage.",
+        "Single-name concentration plus no stop.",
+    ], "Pre-committed rules plus honest post-trade review."),
+    ("The primary goal of this course is to:", [
+        "Build a repeatable investing process whose quality is independent of any single outcome.",
+        "Maximize turnover.",
+        "Pick the best stock every week.",
+        "Predict macro releases.",
+    ], "Build a repeatable investing process whose quality is independent of any single outcome."),
+]
+
+
 def _quiz_content_for_module(module_title, question_count=20):
     plan = _module_teaching_plan(module_title, "")
-    term1, term2, _term3 = [term for term, _ in plan["core_terms"]]
-    stem_scenario = plan["scenario"]
-
-    bank = [
-        (f"Which statement best reflects this module's core mindset?", [
-            "Judge decisions by process quality and evidence, not just outcome.",
-            "Chase the highest recent return with full size.",
-            "Avoid benchmarks because they reduce confidence.",
-            "Rebuild your rules after each trade outcome.",
-        ], "Judge decisions by process quality and evidence, not just outcome."),
-        (f"In this module, {term1.lower()} is best defined as:", [
-            f"{term1} is a probability-based estimate rather than a certainty.",
-            f"{term1} is the same as last month's realized return.",
-            f"{term1} means ignoring downside to maximize upside.",
-            f"{term1} is only relevant for short-term traders.",
-        ], f"{term1} is a probability-based estimate rather than a certainty."),
-        (f"Why is documenting an invalidation rule before entry important?", [
-            "It prevents post-hoc rationalization and improves risk discipline.",
-            "It guarantees every trade will be profitable.",
-            "It removes the need for position sizing.",
-            "It replaces the need for a thesis.",
-        ], "It prevents post-hoc rationalization and improves risk discipline."),
-        ("If your portfolio returned 6% and benchmark returned 4%, excess return is:", ["2%", "10%", "-2%", "4%"], "2%"),
-        ("Contribution to return is best interpreted as:", [
-            "How much each position added/subtracted to total portfolio return.",
-            "The number of trades placed during the week.",
-            "Only the return of your largest holding.",
-            "A measure that ignores position weights.",
-        ], "How much each position added/subtracted to total portfolio return."),
-        (f"What is the strongest reason to monitor {term2.lower()} proactively?", [
-            f"Because {term2.lower()} determines whether your strategy can survive adverse paths.",
-            f"Because {term2.lower()} only matters after the semester ends.",
-            f"Because {term2.lower()} can be ignored when conviction is high.",
-            f"Because {term2.lower()} is identical across all assets.",
-        ], f"Because {term2.lower()} determines whether your strategy can survive adverse paths."),
-        ("A portfolio has top-3 weights of 18%, 16%, and 11%. Top-3 concentration is:", ["45%", "29%", "18%", "11%"], "45%"),
-        ("Which response best demonstrates high-quality trade review?", [
-            "Compare thesis vs outcome, identify process gaps, and define one concrete upgrade.",
-            "Focus only on P&L and skip risk analysis.",
-            "Blame market noise for all underperformance.",
-            "Double size after any winning trade.",
-        ], "Compare thesis vs outcome, identify process gaps, and define one concrete upgrade."),
-        ("Which is the best benchmark selection principle?", [
-            "Use a benchmark aligned to your portfolio's primary exposure.",
-            "Always use cash as the benchmark.",
-            "Use the highest returning ETF each week.",
-            "Never use benchmarks for concentrated portfolios.",
-        ], "Use a benchmark aligned to your portfolio's primary exposure."),
-        (f"{stem_scenario} What is the most disciplined first action?", [
-            "Re-check thesis evidence and position limits before increasing risk.",
-            "Increase every position equally to avoid regret.",
-            "Ignore valuation and focus only on momentum.",
-            "Wait for social confirmation before deciding.",
-        ], "Re-check thesis evidence and position limits before increasing risk."),
-    ]
+    # Prefer the per-module 20-unique-stem bank when available (weeks 2-10 and final exam).
+    # Fall back to the generic bank (also 20 unique stems) so every assignment has distinct questions.
+    module_bank = plan.get("quiz_bank") if isinstance(plan, dict) else None
+    bank = module_bank if (isinstance(module_bank, list) and len(module_bank) >= question_count) else _GENERIC_QUIZ_BANK
 
     questions = []
     answer_key = {}
     for idx in range(question_count):
         stem, choices, correct = bank[idx % len(bank)]
         qid = f"q{idx + 1}"
-        questions.append({"id": qid, "prompt": stem, "choices": choices})
+        questions.append({"id": qid, "prompt": stem, "choices": list(choices)})
         answer_key[qid] = correct
 
     return {
-        "instructions": f"{module_title} quiz. Select one best answer for each question based on this week's eText and assignment expectations.",
+        "instructions": f"{module_title} quiz. Select one best answer for each question based on this week's eText.",
         "questions": questions,
     }, {"questions": answer_key}
 
@@ -1191,6 +2554,7 @@ def generate_curriculum_for_competition(competition_id, total_weeks, start_date,
 
     topics = _build_curriculum_topics(total_weeks)
     schedule = _build_module_schedule(total_weeks, start_date, end_date)
+    previous_module_id = None
     for week in range(1, total_weeks + 1):
         title, description = topics[week - 1]
         unlock_date, due_date = schedule[week - 1]
@@ -1202,9 +2566,12 @@ def generate_curriculum_for_competition(competition_id, total_weeks, start_date,
             lesson_content=_lesson_content_for_module(title, description, week),
             unlock_date=unlock_date,
             due_date=due_date,
+            prerequisite_module_id=previous_module_id,
+            passing_threshold=70.0,
         )
         db.session.add(module)
         db.session.flush()
+        previous_module_id = module.id
 
         quiz_content, quiz_answer_key = _quiz_content_for_module(module.title, question_count=20)
         db.session.add(CurriculumAssignment(
@@ -1349,6 +2716,85 @@ def _is_module_in_grade_scope(module, now=None):
         return False
     effective_now = now or datetime.utcnow()
     return bool(module.unlock_date and module.unlock_date <= effective_now)
+
+
+def _module_prerequisite_passed(curriculum, module, user_id):
+    """Return True if the student has graded submissions meeting the module's prerequisite passing threshold.
+
+    Criterion: the prerequisite module's quiz/exam submissions (auto-graded) average at or above
+    the prerequisite's passing_threshold. Modules with no explicit prerequisite_module_id
+    fall back to 'previous week number'.
+    """
+    if not module or not curriculum or user_id is None:
+        return True
+    prereq_id = getattr(module, 'prerequisite_module_id', None)
+    prereq = None
+    if prereq_id:
+        prereq = db.session.get(CurriculumModule, prereq_id)
+    else:
+        # Implicit prereq: the prior week in the same curriculum.
+        if module.week_number and module.week_number > 1:
+            prereq = CurriculumModule.query.filter_by(
+                curriculum_id=curriculum.id,
+                week_number=module.week_number - 1,
+            ).first()
+    if not prereq:
+        return True
+    prereq_assignments = CurriculumAssignment.query.filter_by(module_id=prereq.id).all()
+    gated_assignments = [a for a in prereq_assignments if a.type in ('quiz', 'exam')]
+    if not gated_assignments:
+        # No auto-graded item to gate on; treat as passed.
+        return True
+    threshold = float(getattr(prereq, 'passing_threshold', 70.0) or 70.0)
+    for assignment in gated_assignments:
+        submission = CurriculumSubmission.query.filter_by(
+            assignment_id=assignment.id,
+            user_id=user_id,
+        ).first()
+        if not submission or not submission.auto_graded:
+            return False
+        if (submission.percentage or 0.0) < threshold:
+            return False
+    return True
+
+
+def _module_lock_state(curriculum, module, user_id, now=None, requester_user=None, competition=None):
+    """Return a dict describing whether the module is locked for this student.
+
+    Teachers/admins never see locked modules; they get prerequisiteMet=True and locked=False.
+    """
+    effective_now = now or datetime.utcnow()
+    time_unlocked = bool(module and module.unlock_date and module.unlock_date <= effective_now)
+    is_instructor = False
+    if requester_user and competition:
+        is_instructor = _is_competition_instructor(requester_user, competition)
+    enforce = bool(curriculum and getattr(curriculum, 'enforce_prerequisites', False))
+    prereq_passed = True
+    if enforce and not is_instructor:
+        prereq_passed = _module_prerequisite_passed(curriculum, module, user_id)
+    # Locked if enforce is on AND (not time-unlocked OR prereq not passed), but never for instructors.
+    if is_instructor:
+        locked = False
+    elif enforce:
+        locked = (not time_unlocked) or (not prereq_passed)
+    else:
+        # Legacy behavior: modules with future unlock_date are still readable (back-compat).
+        locked = False
+    prereq_module_id = getattr(module, 'prerequisite_module_id', None)
+    if not prereq_module_id and module and module.week_number and module.week_number > 1:
+        implicit = CurriculumModule.query.filter_by(
+            curriculum_id=curriculum.id if curriculum else None,
+            week_number=module.week_number - 1,
+        ).first() if curriculum else None
+        prereq_module_id = implicit.id if implicit else None
+    return {
+        "locked": locked,
+        "timeUnlocked": time_unlocked,
+        "prerequisiteMet": prereq_passed,
+        "prerequisiteModuleId": prereq_module_id,
+        "enforcePrerequisites": enforce,
+        "passingThreshold": float(getattr(module, 'passing_threshold', 70.0) or 70.0) if module else None,
+    }
 
 
 def _module_grade_row(module, assignments, submission_by_assignment):
@@ -1886,6 +3332,41 @@ def _normalize_submission_answers(assignment, answers):
     return {"answers": normalized_answers}
 
 
+
+
+def _build_quiz_snapshot(assignment):
+    """Capture the exact question order + answer key the student is about to see.
+
+    Stored on CurriculumSubmission.question_order_json. Ensures grading uses the questions
+    the student actually answered, even if assignment.content_json is edited mid-attempt.
+    """
+    if not assignment:
+        return None
+    content = assignment.content_json or {}
+    questions = content.get("questions") if isinstance(content, dict) else None
+    if not isinstance(questions, list):
+        return None
+    order = [str(q.get("id")) for q in questions if isinstance(q, dict) and q.get("id") is not None]
+    key_raw = (assignment.answer_key_json or {}).get("questions") if isinstance(assignment.answer_key_json, dict) else None
+    answer_key = {str(k): v for k, v in key_raw.items()} if isinstance(key_raw, dict) else {}
+    return {
+        "order": order,
+        "answerKey": answer_key,
+        "assignmentId": assignment.id,
+        "capturedAt": datetime.utcnow().isoformat(),
+    }
+
+
+def _snapshot_answer_key(submission, assignment):
+    """Return the answer key to grade against: the per-submission snapshot if present,
+    else the current assignment answer_key_json. This is the core of Issue #2's fix.
+    """
+    snapshot = getattr(submission, 'question_order_json', None) if submission else None
+    if isinstance(snapshot, dict):
+        key = snapshot.get("answerKey")
+        if isinstance(key, dict) and key:
+            return {str(k): v for k, v in key.items()}
+    return _quiz_answer_key_map(assignment)
 
 
 def _quiz_answer_key_map(assignment):
@@ -3305,9 +4786,14 @@ def curriculum_modules(competition_id):
     curriculum = Curriculum.query.filter_by(competition_id=resolved_competition_id, enabled=True).first()
     if not curriculum:
         return jsonify({"message": "Curriculum not enabled for this competition"}), 404
+    # Optional requester context lets us compute per-student lock state and instructor bypass.
+    requester_username = request.args.get("username")
+    requester_user = User.query.filter_by(username=requester_username).first() if requester_username else None
+    competition = db.session.get(Competition, resolved_competition_id)
     modules = CurriculumModule.query.filter_by(curriculum_id=curriculum.id).order_by(CurriculumModule.week_number.asc()).all()
     payload = []
     did_update_legacy_content = False
+    now = datetime.utcnow()
     for module in modules:
         assignments = CurriculumAssignment.query.filter_by(module_id=module.id).all()
         for assignment in assignments:
@@ -3315,6 +4801,14 @@ def curriculum_modules(competition_id):
             if upgraded_content is not assignment.content_json:
                 assignment.content_json = upgraded_content
                 did_update_legacy_content = True
+        lock_state = _module_lock_state(
+            curriculum,
+            module,
+            requester_user.id if requester_user else None,
+            now=now,
+            requester_user=requester_user,
+            competition=competition,
+        )
         payload.append({
             "moduleId": module.id,
             "weekNumber": module.week_number,
@@ -3325,7 +4819,14 @@ def curriculum_modules(competition_id):
             "lessonContentHtml": _lesson_content_html(module.lesson_content),
             "lesson_content_html": _lesson_content_html(module.lesson_content),
             "unlockDate": module.unlock_date.isoformat(),
+            "unlocksAt": module.unlock_date.isoformat(),
             "dueDate": module.due_date.isoformat(),
+            "locked": lock_state["locked"],
+            "timeUnlocked": lock_state["timeUnlocked"],
+            "prerequisiteMet": lock_state["prerequisiteMet"],
+            "prerequisiteModuleId": lock_state["prerequisiteModuleId"],
+            "enforcePrerequisites": lock_state["enforcePrerequisites"],
+            "passingThreshold": lock_state["passingThreshold"],
             "assignments": [{
                 "assignmentId": a.id,
                 "type": a.type,
@@ -3339,6 +4840,71 @@ def curriculum_modules(competition_id):
     if did_update_legacy_content:
         db.session.commit()
     return jsonify(payload)
+
+
+@app.route('/curriculum/competition/<int:competition_id>/modules/lesson-content', methods=['PATCH'])
+def curriculum_update_lesson_content(competition_id):
+    """Instructor-only endpoint to author/update eText (lesson_content) for selected modules
+    without regenerating the whole curriculum. See docs/etext_update_backend_prompt.md.
+    """
+    data = request.get_json() or {}
+    username = data.get("username")
+    updates = data.get("updates")
+    user = User.query.filter_by(username=username).first() if username else None
+    if not user:
+        return jsonify({"message": "username is required and must refer to an existing user"}), 401
+
+    resolved_competition_id = _resolve_curriculum_competition_id(competition_id, requester_user_id=user.id)
+    competition = db.session.get(Competition, resolved_competition_id)
+    if not competition:
+        return jsonify({"message": "Competition not found"}), 404
+    if not _is_competition_instructor(user, competition):
+        return jsonify({"message": "Instructor access required"}), 403
+
+    curriculum = Curriculum.query.filter_by(competition_id=resolved_competition_id, enabled=True).first()
+    if not curriculum:
+        return jsonify({"message": "Curriculum not enabled for this competition"}), 404
+
+    if not isinstance(updates, list) or not updates:
+        return jsonify({"message": "updates must be a non-empty array"}), 400
+
+    valid_module_ids = {
+        m.id for m in CurriculumModule.query.filter_by(curriculum_id=curriculum.id).all()
+    }
+    normalized_updates = []
+    for idx, item in enumerate(updates):
+        if not isinstance(item, dict):
+            return jsonify({"message": f"updates[{idx}] must be an object"}), 400
+        raw_id = _first_present(item, "moduleId", "module_id")
+        raw_content = _first_present(item, "lessonContent", "lesson_content")
+        try:
+            module_id = int(raw_id)
+        except (TypeError, ValueError):
+            return jsonify({"message": f"updates[{idx}].moduleId must be an integer"}), 400
+        if module_id not in valid_module_ids:
+            return jsonify({"message": f"updates[{idx}].moduleId does not belong to this curriculum"}), 400
+        if not isinstance(raw_content, str):
+            return jsonify({"message": f"updates[{idx}].lessonContent must be a non-empty string"}), 400
+        trimmed = raw_content.strip()
+        if not trimmed:
+            return jsonify({"message": f"updates[{idx}].lessonContent must be a non-empty string"}), 400
+        normalized_updates.append((module_id, trimmed))
+
+    updated_ids = []
+    for module_id, content in normalized_updates:
+        module = db.session.get(CurriculumModule, module_id)
+        if not module:
+            continue
+        module.lesson_content = content
+        module.updated_at = datetime.utcnow()
+        updated_ids.append(module_id)
+    db.session.commit()
+    return jsonify({
+        "updatedCount": len(updated_ids),
+        "updatedModuleIds": updated_ids,
+        "competitionId": resolved_competition_id,
+        "curriculumId": curriculum.id,
+    })
 
 
 @app.route('/curriculum/competition/<int:competition_id>/grades/<int:user_id>', methods=['GET'])
@@ -3505,16 +5071,54 @@ def curriculum_submit_assignment(assignment_id):
     comp = db.session.get(Competition, curriculum.competition_id)
     if not membership and not _is_competition_instructor(user, comp):
         return jsonify({"message": "User is not a member of this competition"}), 403
+
+    # Module lock enforcement: non-instructors cannot submit to a locked module when
+    # enforce_prerequisites is on for this curriculum. Returns 423 Locked.
+    lock_state = _module_lock_state(
+        curriculum,
+        module,
+        user.id,
+        requester_user=user,
+        competition=comp,
+    )
+    if lock_state["locked"]:
+        reason = "Module is locked: complete the prerequisite module first." if not lock_state["prerequisiteMet"] else "Module is not yet unlocked."
+        return jsonify({
+            "message": reason,
+            "locked": True,
+            "prerequisiteMet": lock_state["prerequisiteMet"],
+            "prerequisiteModuleId": lock_state["prerequisiteModuleId"],
+            "unlocksAt": module.unlock_date.isoformat(),
+        }), 423
+
     try:
         normalized_answers = _normalize_submission_answers(assignment, answers)
     except ValueError as exc:
         return jsonify({"message": str(exc)}), 422
 
+    # Load or initialize the submission row first so we can honor any stored question-order snapshot
+    # when grading. Snapshot is captured on the first quiz/exam submission and reused afterwards.
+    submission = CurriculumSubmission.query.filter_by(assignment_id=assignment_id, user_id=user.id).first()
+    if not submission:
+        submission = CurriculumSubmission(
+            assignment_id=assignment_id,
+            user_id=user.id,
+            competition_id=curriculum.competition_id,
+            answers_json=normalized_answers,
+        )
+        if assignment.type in ("quiz", "exam"):
+            submission.question_order_json = _build_quiz_snapshot(assignment)
+        db.session.add(submission)
+    elif assignment.type in ("quiz", "exam") and not getattr(submission, 'question_order_json', None):
+        # Back-fill snapshot for pre-existing submissions so subsequent writes stay stable.
+        submission.question_order_json = _build_quiz_snapshot(assignment)
+
     score = 0.0
     auto_graded = False
     feedback = {"lateSubmission": datetime.utcnow() > module.due_date}
     if assignment.type in ("quiz", "exam"):
-        answer_key = _quiz_answer_key_map(assignment)
+        # Grade against the per-submission snapshot (falls back to current answer key if none).
+        answer_key = _snapshot_answer_key(submission, assignment)
         if answer_key:
             total_questions = len(answer_key)
             correct = 0
@@ -3526,6 +5130,7 @@ def curriculum_submit_assignment(assignment_id):
             auto_graded = True
             feedback["correct"] = correct
             feedback["totalQuestions"] = total_questions
+            feedback["gradedAgainstSnapshot"] = bool(getattr(submission, 'question_order_json', None))
         else:
             feedback["gradingMode"] = "no_answer_key"
     else:
@@ -3538,15 +5143,6 @@ def curriculum_submit_assignment(assignment_id):
         feedback["question2PointsPossible"] = 10
 
     percentage = (score / assignment.points * 100.0) if assignment.points else 0.0
-    submission = CurriculumSubmission.query.filter_by(assignment_id=assignment_id, user_id=user.id).first()
-    if not submission:
-        submission = CurriculumSubmission(
-            assignment_id=assignment_id,
-            user_id=user.id,
-            competition_id=curriculum.competition_id,
-            answers_json=normalized_answers,
-        )
-        db.session.add(submission)
     submission.answers_json = normalized_answers
     submission.competition_id = curriculum.competition_id
     submission.score = round(score, 2)
