@@ -133,6 +133,8 @@ class Curriculum(db.Model):
     total_weeks = db.Column(db.Integer, nullable=False)
     start_date = db.Column(db.DateTime, nullable=False)
     end_date = db.Column(db.DateTime, nullable=False)
+    # Default off for back-compat with live cohorts; new competitions opt in.
+    enforce_prerequisites = db.Column(db.Boolean, nullable=False, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -146,6 +148,8 @@ class CurriculumModule(db.Model):
     lesson_content = db.Column(db.Text, nullable=True)
     unlock_date = db.Column(db.DateTime, nullable=False)
     due_date = db.Column(db.DateTime, nullable=False)
+    prerequisite_module_id = db.Column(db.Integer, db.ForeignKey('curriculum_module.id'), nullable=True)
+    passing_threshold = db.Column(db.Float, nullable=False, default=70.0)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     __table_args__ = (db.UniqueConstraint('curriculum_id', 'week_number', name='_curriculum_week_uc'),)
@@ -169,6 +173,9 @@ class CurriculumSubmission(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False, index=True)
     competition_id = db.Column(db.Integer, db.ForeignKey('competition.id'), nullable=False, index=True)
     answers_json = db.Column(db.JSON, nullable=False)
+    # Snapshot of the quiz/exam question order + answer key taken when the student first opens the quiz.
+    # Ensures grading uses the exact questions the student saw even if assignment.content_json is edited mid-attempt.
+    question_order_json = db.Column(db.JSON, nullable=True)
     score = db.Column(db.Float, nullable=False, default=0.0)
     percentage = db.Column(db.Float, nullable=False, default=0.0)
     submitted_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
@@ -341,10 +348,22 @@ def ensure_schema_compatibility():
                     'CREATE UNIQUE INDEX IF NOT EXISTS _account_performance_daily_uc '
                     'ON account_performance_history (username, account_type, account_id, date)'
                 ))
+        if 'curriculum' in table_names:
+            existing_cols = {c['name'] for c in insp.get_columns('curriculum')}
+            if 'enforce_prerequisites' not in existing_cols:
+                db.session.execute(text(
+                    'ALTER TABLE curriculum ADD COLUMN enforce_prerequisites BOOLEAN NOT NULL DEFAULT 0'
+                ))
         if 'curriculum_module' in table_names:
             existing_cols = {c['name'] for c in insp.get_columns('curriculum_module')}
             if 'lesson_content' not in existing_cols:
                 db.session.execute(text('ALTER TABLE curriculum_module ADD COLUMN lesson_content TEXT'))
+            if 'prerequisite_module_id' not in existing_cols:
+                db.session.execute(text('ALTER TABLE curriculum_module ADD COLUMN prerequisite_module_id INTEGER'))
+            if 'passing_threshold' not in existing_cols:
+                db.session.execute(text(
+                    'ALTER TABLE curriculum_module ADD COLUMN passing_threshold DOUBLE PRECISION NOT NULL DEFAULT 70.0'
+                ))
         if 'curriculum_submission' in table_names:
             existing_cols = {c['name'] for c in insp.get_columns('curriculum_submission')}
             submission_needed = {
@@ -354,6 +373,7 @@ def ensure_schema_compatibility():
                 'graded_by_user_id': 'INTEGER',
                 'graded_at': 'TIMESTAMP',
                 'rubric_notes': 'TEXT',
+                'question_order_json': 'TEXT',
             }
             for col_name, col_type in submission_needed.items():
                 if col_name in existing_cols:
@@ -700,6 +720,14 @@ def _module_teaching_plan(module_title, module_description):
             "Define risk controls: sizing, invalidation trigger, and portfolio impact.",
             "Document what evidence would make you reduce, exit, or add.",
         ],
+        "deep_dive_paragraphs": [
+            "Expected return is a forward-looking, probability-weighted estimate—it is not a forecast of what will happen and it is certainly not last month's return. Good investors build a mental distribution of outcomes (base case, upside, downside) and compare the prize with the penalty. If the downside scenario is large enough to force a bad decision under pressure, the position is too big even if the base case looks attractive.",
+            "Risk is more than volatility; it is the full range and severity of outcomes you must live with. Drawdowns, liquidity gaps, factor crowding, and behavioral response all count. The working definition for this course: risk is anything that can force you off your plan before the thesis has time to play out. Strong risk controls are planned in advance, written down, and mechanical—so emotion cannot overwrite them when markets are loud.",
+            "Process is the system that turns those ideas into repeatable decisions. A usable process names the thesis, lists the evidence required, picks a position size connected to downside, and defines the invalidation point before the trade is placed. Process is what makes a track record interpretable: you can tell whether a win came from edge or from luck, and whether a loss was a bad outcome or a bad decision.",
+        ],
+        "worked_example": (
+            "A student opens a starter position at 4% of portfolio in a quality compounder with a 12-month thesis, requires three out of four evidence checks (operating margin trend, free cash flow conversion, insider behavior, relative strength) to add, and pre-commits to trimming to 2% on a break of the 200-day trend with no fundamental offset. When the stock drops 9% on a peer guide-down, the pre-written plan says 'hold, because fundamentals did not change'; only a break of the trend AND a fundamental shock trips the trim rule. The student writes the outcome in their trade log with the rule applied, not their feelings."
+        ),
         "assignment_q1": [
             "Select one real trade from this module and evaluate decision quality (high/medium/low) using at least four eText criteria: thesis clarity, evidence quality, sizing discipline, and risk controls.",
             "Identify the single most material risk in that trade (market, sector, company, valuation, liquidity, or behavioral). Explain whether your controls were pre-planned, reactive, or missing—and the consequence of that choice.",
@@ -711,6 +739,7 @@ def _module_teaching_plan(module_title, module_description):
             "Estimate contribution to return from your top two positions and explain whether performance came mostly from thesis edge, factor exposure, or concentration luck.",
         ],
         "application_prompt": "State one action you will apply in your next simulator decision and why it should improve process quality.",
+        "quiz_bank": None,
     }
 
     if "introduction to investing" in lower_title or "markets" in lower_title:
@@ -834,7 +863,8 @@ def _lesson_content_for_module(module_title, module_description, week_number):
     plan = _module_teaching_plan(module_title, module_description)
     terms_block = "\n".join([f"- **{term}:** {meaning}" for term, meaning in plan["core_terms"]])
     walkthrough_block = "\n".join([f"{idx}. {step}" for idx, step in enumerate(plan["walkthrough"], start=1)])
-    quiz_focus_block = "\n".join([f"- {item}" for item in plan["quiz_focus"]])
+    deep_dive_block = "\n\n".join(plan.get("deep_dive_paragraphs") or [])
+    worked_example = plan.get("worked_example") or ""
 
     return (
         f"## Week {week_number} eText: {module_title}\n\n"
@@ -844,27 +874,23 @@ def _lesson_content_for_module(module_title, module_description, week_number):
         "In this course, strong investing means a clear thesis, measurable evidence, and disciplined risk controls.\n\n"
         "### Core concepts you need to own\n"
         f"{terms_block}\n\n"
+        "### Deep dive\n"
+        f"{deep_dive_block}\n\n"
         "### Why this matters in your simulator account\n"
         f"{plan['scenario']}\n\n"
+        "### Worked example\n"
+        f"{worked_example}\n\n"
         "### Step-by-step decision workflow\n"
         f"{walkthrough_block}\n\n"
         "### Frequent mistake to avoid\n"
         f"{plan['likely_confusion']} Write your thesis, size, and invalidation *before* execution so your process does not get rewritten by emotion.\n\n"
-        "### Quant toolkit (use in quiz + assignment)\n"
+        "### Quant toolkit\n"
         "- **Holding period return:** (Ending Value - Beginning Value + Cash Flows) / Beginning Value\n"
         "- **Portfolio weight:** Position Market Value / Total Portfolio Value\n"
         "- **Contribution to return:** Position Weight × Position Return\n"
         "- **Excess return vs benchmark:** Portfolio Return - Benchmark Return\n"
         "- **Concentration check (Top-3 weight):** Sum of top 3 position weights\n"
         "Every number needs interpretation: What does it imply for risk, and what action follows?\n\n"
-        "### Quiz alignment map (20 points)\n"
-        "Expect decision-based multiple-choice questions on:\n"
-        f"{quiz_focus_block}\n\n"
-        "### Assignment alignment map (2 questions, 10 points each)\n"
-        "- **A1:** Deep qualitative trade critique using thesis, evidence, risk, and execution quality.\n"
-        "- **A2:** Quantitative portfolio analysis with return math, allocation breakdown, and contribution interpretation.\n\n"
-        "### What an excellent submission looks like\n"
-        "It is specific, evidence-driven, and self-critical. It includes calculations, states assumptions, explains tradeoffs, and closes with a clear process upgrade for your next trade.\n\n"
         "### Exit ticket\n"
         f"{plan['application_prompt']}"
     )
