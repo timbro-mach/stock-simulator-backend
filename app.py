@@ -310,10 +310,24 @@ with app.app_context():
 
 
 def ensure_schema_compatibility():
-    """Best-effort additive schema sync for deployments without migrations."""
+    """Best-effort additive schema sync for deployments without migrations.
+
+    Each ALTER runs in its own transaction so one dialect-specific failure does
+    not roll back the other additive migrations.
+    """
+    def _safe_exec(sql):
+        try:
+            db.session.execute(text(sql))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            logger.exception('Schema compatibility step failed for: %s', sql)
+
     try:
         insp = inspect(db.engine)
         table_names = insp.get_table_names()
+        dialect = db.engine.dialect.name  # 'postgresql', 'sqlite', etc.
+        bool_false = 'FALSE' if dialect == 'postgresql' else '0'
 
         if 'competition_team' in table_names:
             existing_cols = {c['name'] for c in insp.get_columns('competition_team')}
@@ -351,19 +365,21 @@ def ensure_schema_compatibility():
         if 'curriculum' in table_names:
             existing_cols = {c['name'] for c in insp.get_columns('curriculum')}
             if 'enforce_prerequisites' not in existing_cols:
-                db.session.execute(text(
-                    'ALTER TABLE curriculum ADD COLUMN enforce_prerequisites BOOLEAN NOT NULL DEFAULT 0'
-                ))
+                # Run in its own transaction and use dialect-appropriate boolean default.
+                # Postgres rejects "DEFAULT 0" for BOOLEAN; it requires FALSE. SQLite accepts 0.
+                _safe_exec(
+                    f'ALTER TABLE curriculum ADD COLUMN enforce_prerequisites BOOLEAN NOT NULL DEFAULT {bool_false}'
+                )
         if 'curriculum_module' in table_names:
             existing_cols = {c['name'] for c in insp.get_columns('curriculum_module')}
             if 'lesson_content' not in existing_cols:
-                db.session.execute(text('ALTER TABLE curriculum_module ADD COLUMN lesson_content TEXT'))
+                _safe_exec('ALTER TABLE curriculum_module ADD COLUMN lesson_content TEXT')
             if 'prerequisite_module_id' not in existing_cols:
-                db.session.execute(text('ALTER TABLE curriculum_module ADD COLUMN prerequisite_module_id INTEGER'))
+                _safe_exec('ALTER TABLE curriculum_module ADD COLUMN prerequisite_module_id INTEGER')
             if 'passing_threshold' not in existing_cols:
-                db.session.execute(text(
+                _safe_exec(
                     'ALTER TABLE curriculum_module ADD COLUMN passing_threshold DOUBLE PRECISION NOT NULL DEFAULT 70.0'
-                ))
+                )
         if 'curriculum_submission' in table_names:
             existing_cols = {c['name'] for c in insp.get_columns('curriculum_submission')}
             submission_needed = {
@@ -378,7 +394,7 @@ def ensure_schema_compatibility():
             for col_name, col_type in submission_needed.items():
                 if col_name in existing_cols:
                     continue
-                db.session.execute(text(f'ALTER TABLE curriculum_submission ADD COLUMN {col_name} {col_type}'))
+                _safe_exec(f'ALTER TABLE curriculum_submission ADD COLUMN {col_name} {col_type}')
         if 'submission_question_grades' not in table_names:
             db.session.execute(text(
                 'CREATE TABLE submission_question_grades ('
