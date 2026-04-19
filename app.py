@@ -4923,6 +4923,158 @@ def curriculum_update_lesson_content(competition_id):
     })
 
 
+def _validate_written_assignment_content(content, idx):
+    """Validate and normalize a written assignment's content_json.
+
+    Mirrors the structure produced by _assignment_content_for_module so existing
+    frontend renderers keep working. Returns (normalized_content, error_message).
+    If error_message is truthy, the caller should reject the update.
+    """
+    if not isinstance(content, dict):
+        return None, f"updates[{idx}].content must be an object"
+    instructions = content.get("instructions")
+    if not isinstance(instructions, str) or not instructions.strip():
+        return None, f"updates[{idx}].content.instructions must be a non-empty string"
+    questions = content.get("questions")
+    if not isinstance(questions, list) or not questions:
+        return None, f"updates[{idx}].content.questions must be a non-empty array"
+
+    seen_ids = set()
+    normalized_questions = []
+    for q_idx, question in enumerate(questions):
+        if not isinstance(question, dict):
+            return None, f"updates[{idx}].content.questions[{q_idx}] must be an object"
+        qid = question.get("id")
+        if not isinstance(qid, str) or not qid.strip():
+            return None, f"updates[{idx}].content.questions[{q_idx}].id must be a non-empty string"
+        qid = qid.strip()
+        if qid in seen_ids:
+            return None, f"updates[{idx}].content.questions has duplicate id '{qid}'"
+        seen_ids.add(qid)
+        prompt = question.get("prompt")
+        if not isinstance(prompt, str) or not prompt.strip():
+            return None, f"updates[{idx}].content.questions[{q_idx}].prompt must be a non-empty string"
+        sections = question.get("sections")
+        if not isinstance(sections, list) or not sections:
+            return None, f"updates[{idx}].content.questions[{q_idx}].sections must be a non-empty array"
+        normalized_sections = []
+        for s_idx, section in enumerate(sections):
+            if not isinstance(section, dict):
+                return None, f"updates[{idx}].content.questions[{q_idx}].sections[{s_idx}] must be an object"
+            sid = section.get("id")
+            if not isinstance(sid, str) or not sid.strip():
+                return None, f"updates[{idx}].content.questions[{q_idx}].sections[{s_idx}].id must be a non-empty string"
+            instruction = section.get("instruction")
+            if not isinstance(instruction, str) or not instruction.strip():
+                return None, f"updates[{idx}].content.questions[{q_idx}].sections[{s_idx}].instruction must be a non-empty string"
+            normalized_sections.append({"id": sid.strip(), "instruction": instruction.strip()})
+        normalized_question = {
+            "id": qid,
+            "prompt": prompt.strip(),
+            "sections": normalized_sections,
+        }
+        if "kind" in question and isinstance(question.get("kind"), str):
+            normalized_question["kind"] = question["kind"]
+        if "points" in question:
+            try:
+                normalized_question["points"] = int(question["points"])
+            except (TypeError, ValueError):
+                return None, f"updates[{idx}].content.questions[{q_idx}].points must be an integer"
+        normalized_questions.append(normalized_question)
+
+    rubric_hints = content.get("rubricHints")
+    normalized_rubric = None
+    if rubric_hints is not None:
+        if not isinstance(rubric_hints, list):
+            return None, f"updates[{idx}].content.rubricHints must be an array of strings"
+        normalized_rubric = []
+        for h_idx, hint in enumerate(rubric_hints):
+            if not isinstance(hint, str) or not hint.strip():
+                return None, f"updates[{idx}].content.rubricHints[{h_idx}] must be a non-empty string"
+            normalized_rubric.append(hint.strip())
+
+    normalized = {
+        "instructions": instructions.strip(),
+        "questions": normalized_questions,
+    }
+    if normalized_rubric is not None:
+        normalized["rubricHints"] = normalized_rubric
+    return normalized, None
+
+
+@app.route('/curriculum/competition/<int:competition_id>/assignments/content', methods=['PATCH'])
+def curriculum_update_assignment_content(competition_id):
+    """Instructor-only endpoint to author/update written-assignment prompts for selected
+    assignments without regenerating the curriculum. Scoped to type='assignment' only;
+    quizzes and exams are intentionally excluded so answer keys stay stable.
+    """
+    data = request.get_json() or {}
+    username = data.get("username")
+    updates = data.get("updates")
+    user = User.query.filter_by(username=username).first() if username else None
+    if not user:
+        return jsonify({"message": "username is required and must refer to an existing user"}), 401
+
+    resolved_competition_id = _resolve_curriculum_competition_id(competition_id, requester_user_id=user.id)
+    competition = db.session.get(Competition, resolved_competition_id)
+    if not competition:
+        return jsonify({"message": "Competition not found"}), 404
+    if not _is_competition_instructor(user, competition):
+        return jsonify({"message": "Instructor access required"}), 403
+
+    curriculum = Curriculum.query.filter_by(competition_id=resolved_competition_id, enabled=True).first()
+    if not curriculum:
+        return jsonify({"message": "Curriculum not enabled for this competition"}), 404
+
+    if not isinstance(updates, list) or not updates:
+        return jsonify({"message": "updates must be a non-empty array"}), 400
+
+    curriculum_module_ids = [
+        m.id for m in CurriculumModule.query.filter_by(curriculum_id=curriculum.id).all()
+    ]
+    assignments_in_curriculum = {
+        a.id: a
+        for a in CurriculumAssignment.query.filter(
+            CurriculumAssignment.module_id.in_(curriculum_module_ids)
+        ).all()
+    } if curriculum_module_ids else {}
+
+    normalized_updates = []
+    for idx, item in enumerate(updates):
+        if not isinstance(item, dict):
+            return jsonify({"message": f"updates[{idx}] must be an object"}), 400
+        raw_id = _first_present(item, "assignmentId", "assignment_id")
+        try:
+            assignment_id = int(raw_id)
+        except (TypeError, ValueError):
+            return jsonify({"message": f"updates[{idx}].assignmentId must be an integer"}), 400
+        assignment = assignments_in_curriculum.get(assignment_id)
+        if not assignment:
+            return jsonify({"message": f"updates[{idx}].assignmentId does not belong to this curriculum"}), 400
+        if assignment.type != "assignment":
+            return jsonify({
+                "message": f"updates[{idx}].assignmentId refers to a {assignment.type}; only written assignments are editable here",
+            }), 400
+        raw_content = _first_present(item, "content", "content_json", "contentJson")
+        normalized_content, err = _validate_written_assignment_content(raw_content, idx)
+        if err:
+            return jsonify({"message": err}), 400
+        normalized_updates.append((assignment, normalized_content))
+
+    updated_ids = []
+    for assignment, content in normalized_updates:
+        assignment.content_json = content
+        assignment.updated_at = datetime.utcnow()
+        updated_ids.append(assignment.id)
+    db.session.commit()
+    return jsonify({
+        "updatedCount": len(updated_ids),
+        "updatedAssignmentIds": updated_ids,
+        "competitionId": resolved_competition_id,
+        "curriculumId": curriculum.id,
+    })
+
+
 @app.route('/curriculum/competition/<int:competition_id>/grades/<int:user_id>', methods=['GET'])
 def curriculum_grades(competition_id, user_id):
     requester = request.args.get("username")

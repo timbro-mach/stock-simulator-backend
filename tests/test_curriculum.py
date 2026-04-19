@@ -2084,6 +2084,148 @@ def test_patch_lesson_content_updates_instructor_only(app_client):
     assert empty_resp.status_code == 400
 
 
+def test_patch_assignment_content_instructor_only_and_validated(app_client):
+    # Instructors can author/replace a written assignment's content without regenerating the curriculum.
+    # Quizzes/exams are intentionally excluded so answer_key_json stays consistent.
+    client, app_module = app_client
+    create_user(app_module, username="teacher", email="a-patch-teacher@example.com")
+    create_user(app_module, username="student", email="a-patch-student@example.com")
+    create_user(app_module, username="outsider", email="a-patch-outsider@example.com")
+    resp = _create_competition(client, {
+        "username": "teacher",
+        "competition_name": "Assignment Patch Cup",
+        "curriculumEnabled": True,
+        "curriculumWeeks": 3,
+        "curriculumStartDate": "2026-01-01",
+        "curriculumEndDate": "2026-02-15",
+    })
+    assert resp.status_code == 200
+
+    with app_module.app.app_context():
+        comp = app_module.Competition.query.filter_by(name="Assignment Patch Cup").first()
+        curriculum = app_module.Curriculum.query.filter_by(competition_id=comp.id).first()
+        first_module = app_module.CurriculumModule.query.filter_by(
+            curriculum_id=curriculum.id, week_number=1
+        ).first()
+        written = app_module.CurriculumAssignment.query.filter_by(
+            module_id=first_module.id, type="assignment"
+        ).first()
+        quiz = app_module.CurriculumAssignment.query.filter_by(
+            module_id=first_module.id, type="quiz"
+        ).first()
+        competition_id = comp.id
+        written_id = written.id
+        quiz_id = quiz.id
+
+    custom_content = {
+        "instructions": "Customized Week 1 Assignment — answer both parts using simulator evidence.",
+        "questions": [
+            {
+                "id": "a1",
+                "kind": "quantitative",
+                "points": 10,
+                "prompt": "Part 1: Custom First Trades",
+                "sections": [
+                    {"id": "a", "instruction": "Buy $5,000 of VTI."},
+                    {"id": "b", "instruction": "Report the cost basis and portfolio weight."},
+                ],
+            },
+            {
+                "id": "a2",
+                "kind": "qualitative",
+                "points": 10,
+                "prompt": "Part 2: Custom Reflection",
+                "sections": [
+                    {"id": "a", "instruction": "Write 1-2 paragraphs describing your thesis."},
+                ],
+            },
+        ],
+        "rubricHints": ["Clear thesis", "Accurate math"],
+    }
+
+    # Happy path.
+    ok_resp = client.patch(
+        f"/curriculum/competition/{competition_id}/assignments/content",
+        json={
+            "username": "teacher",
+            "updates": [{"assignmentId": written_id, "content": custom_content}],
+        },
+    )
+    assert ok_resp.status_code == 200
+    payload = ok_resp.get_json()
+    assert payload["updatedCount"] == 1
+    assert payload["updatedAssignmentIds"] == [written_id]
+
+    # Verify the change is visible via GET modules.
+    modules_resp = client.get(f"/curriculum/competition/{competition_id}/modules")
+    assert modules_resp.status_code == 200
+    week1 = modules_resp.get_json()[0]
+    new_written = next(a for a in week1["assignments"] if a["assignmentId"] == written_id)
+    assert new_written["content"]["instructions"].startswith("Customized Week 1")
+    assert new_written["content"]["questions"][0]["prompt"] == "Part 1: Custom First Trades"
+    assert new_written["content"]["questions"][0]["sections"][0]["instruction"] == "Buy $5,000 of VTI."
+
+    # Non-instructor is forbidden.
+    forbidden_resp = client.patch(
+        f"/curriculum/competition/{competition_id}/assignments/content",
+        json={
+            "username": "outsider",
+            "updates": [{"assignmentId": written_id, "content": custom_content}],
+        },
+    )
+    assert forbidden_resp.status_code == 403
+
+    # Targeting a quiz id returns 400 with a helpful message.
+    quiz_resp = client.patch(
+        f"/curriculum/competition/{competition_id}/assignments/content",
+        json={
+            "username": "teacher",
+            "updates": [{"assignmentId": quiz_id, "content": custom_content}],
+        },
+    )
+    assert quiz_resp.status_code == 400
+    assert "only written assignments" in quiz_resp.get_json()["message"]
+
+    # Missing required fields / bad shape is rejected.
+    bad_shape = client.patch(
+        f"/curriculum/competition/{competition_id}/assignments/content",
+        json={
+            "username": "teacher",
+            "updates": [{
+                "assignmentId": written_id,
+                "content": {"instructions": "", "questions": []},
+            }],
+        },
+    )
+    assert bad_shape.status_code == 400
+
+    # Assignment id outside this curriculum is rejected.
+    not_mine = client.patch(
+        f"/curriculum/competition/{competition_id}/assignments/content",
+        json={
+            "username": "teacher",
+            "updates": [{"assignmentId": 999999, "content": custom_content}],
+        },
+    )
+    assert not_mine.status_code == 400
+
+    # Duplicate question ids are rejected.
+    dup_q = dict(custom_content)
+    dup_q["questions"] = [
+        {"id": "a1", "prompt": "p1", "sections": [{"id": "a", "instruction": "x"}]},
+        {"id": "a1", "prompt": "p2", "sections": [{"id": "a", "instruction": "y"}]},
+    ]
+    dup_resp = client.patch(
+        f"/curriculum/competition/{competition_id}/assignments/content",
+        json={
+            "username": "teacher",
+            "updates": [{"assignmentId": written_id, "content": dup_q}],
+        },
+    )
+    assert dup_resp.status_code == 400
+    assert "duplicate id" in dup_resp.get_json()["message"]
+
+
 def test_enforce_prerequisites_defaults_off_for_back_compat(app_client):
     # Existing competitions keep the legacy behavior (modules readable regardless of completion).
     client, app_module = app_client
