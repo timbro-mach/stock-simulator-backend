@@ -2388,6 +2388,83 @@ def _expand_legacy_assignment_content(module_title, assignment_type, content_jso
     return _assignment_content_for_module(module_title)
 
 
+def _format_section_block(sections):
+    if not isinstance(sections, list):
+        return ""
+    lines = []
+    for section in sections:
+        if not isinstance(section, dict):
+            continue
+        sid = (section.get("id") or "").strip()
+        instruction = (section.get("instruction") or "").strip()
+        if sid and instruction:
+            lines.append(f"{sid}. {instruction}")
+    return "\n".join(lines)
+
+
+def _inline_assignment_sections_for_display(content_json):
+    # The student-facing UI renders only question.prompt and ignores the sections array,
+    # which hides the lettered sub-instructions authored on the server. Inline them into
+    # the prompt text so the existing renderer surfaces them. Idempotent so repeat calls,
+    # or content where sections have already been folded in, do not double up.
+    if not isinstance(content_json, dict):
+        return content_json
+    questions = content_json.get("questions")
+    if not isinstance(questions, list) or not questions:
+        return content_json
+    new_questions = []
+    changed = False
+    for question in questions:
+        if not isinstance(question, dict):
+            new_questions.append(question)
+            continue
+        prompt = question.get("prompt")
+        sections = question.get("sections")
+        block = _format_section_block(sections)
+        if not block or not isinstance(prompt, str):
+            new_questions.append(question)
+            continue
+        if prompt.rstrip().endswith(block):
+            new_questions.append(question)
+            continue
+        new_question = dict(question)
+        new_question["prompt"] = prompt.rstrip() + "\n\n" + block
+        new_questions.append(new_question)
+        changed = True
+    if not changed:
+        return content_json
+    new_content = dict(content_json)
+    new_content["questions"] = new_questions
+    return new_content
+
+
+def _serialize_module_assignment(assignment):
+    raw_content = assignment.content_json
+    if (assignment.type or "").lower() in ("assignment", "written_assignment"):
+        display_content = _inline_assignment_sections_for_display(raw_content)
+    else:
+        display_content = raw_content
+    return {
+        "assignmentId": assignment.id,
+        "type": assignment.type,
+        "title": assignment.title,
+        "points": assignment.points,
+        "content": display_content,
+        "content_json": display_content,
+        "answer_key_json": assignment.answer_key_json,
+    }
+
+
+def _strip_inlined_sections_from_prompt(prompt, sections):
+    block = _format_section_block(sections)
+    if not block or not isinstance(prompt, str):
+        return prompt
+    stripped = prompt.rstrip()
+    if stripped.endswith(block):
+        return stripped[: -len(block)].rstrip()
+    return prompt
+
+
 _GENERIC_QUIZ_BANK = [
     ("Which statement best reflects durable decision quality?", [
         "Judge decisions by process quality and evidence, not just outcome.",
@@ -4843,15 +4920,7 @@ def curriculum_modules(competition_id):
             "prerequisiteModuleId": lock_state["prerequisiteModuleId"],
             "enforcePrerequisites": lock_state["enforcePrerequisites"],
             "passingThreshold": lock_state["passingThreshold"],
-            "assignments": [{
-                "assignmentId": a.id,
-                "type": a.type,
-                "title": a.title,
-                "points": a.points,
-                "content": a.content_json,
-                "content_json": a.content_json,
-                "answer_key_json": a.answer_key_json,
-            } for a in assignments]
+            "assignments": [_serialize_module_assignment(a) for a in assignments]
         })
     if did_update_legacy_content:
         db.session.commit()
@@ -4968,9 +5037,12 @@ def _validate_written_assignment_content(content, idx):
             if not isinstance(instruction, str) or not instruction.strip():
                 return None, f"updates[{idx}].content.questions[{q_idx}].sections[{s_idx}].instruction must be a non-empty string"
             normalized_sections.append({"id": sid.strip(), "instruction": instruction.strip()})
+        canonical_prompt = _strip_inlined_sections_from_prompt(prompt.strip(), normalized_sections)
+        if not canonical_prompt:
+            return None, f"updates[{idx}].content.questions[{q_idx}].prompt must be a non-empty string"
         normalized_question = {
             "id": qid,
-            "prompt": prompt.strip(),
+            "prompt": canonical_prompt,
             "sections": normalized_sections,
         }
         if "kind" in question and isinstance(question.get("kind"), str):

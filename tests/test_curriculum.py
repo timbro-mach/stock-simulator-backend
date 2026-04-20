@@ -487,6 +487,22 @@ def test_curriculum_modules_include_lesson_content_and_rich_assignments(app_clie
     written = next(a for a in first_module["assignments"] if a["type"] == "assignment")
     assert len(written["content"]["questions"]) == 2
     assert all(len(q["sections"]) >= 3 for q in written["content"]["questions"])
+    # Section sub-instructions are inlined into the prompt so the student-facing UI
+    # (which renders only `prompt`) still surfaces them.
+    for question in written["content"]["questions"]:
+        for section in question["sections"]:
+            expected_line = f"{section['id']}. {section['instruction']}"
+            assert expected_line in question["prompt"], (
+                f"section line {expected_line!r} missing from served prompt {question['prompt']!r}"
+            )
+
+    # Idempotent: a second GET does not re-inline (no compounding duplicate blocks).
+    second_resp = client.get(f"/curriculum/competition/{competition_id}/modules")
+    second_written = next(
+        a for a in second_resp.get_json()[0]["assignments"] if a["type"] == "assignment"
+    )
+    for first_q, second_q in zip(written["content"]["questions"], second_written["content"]["questions"]):
+        assert first_q["prompt"] == second_q["prompt"]
 
 
 def test_curriculum_modules_expand_legacy_week1_assignment_prompts(app_client):
@@ -2162,8 +2178,17 @@ def test_patch_assignment_content_instructor_only_and_validated(app_client):
     week1 = modules_resp.get_json()[0]
     new_written = next(a for a in week1["assignments"] if a["assignmentId"] == written_id)
     assert new_written["content"]["instructions"].startswith("Customized Week 1")
-    assert new_written["content"]["questions"][0]["prompt"] == "Part 1: Custom First Trades"
+    served_prompt = new_written["content"]["questions"][0]["prompt"]
+    assert served_prompt.startswith("Part 1: Custom First Trades")
+    assert "a. Buy $5,000 of VTI." in served_prompt
+    assert "b. Report the cost basis and portfolio weight." in served_prompt
     assert new_written["content"]["questions"][0]["sections"][0]["instruction"] == "Buy $5,000 of VTI."
+
+    # Storage stays canonical: the prompt persisted in the DB is the original, not
+    # the display-inlined version returned by GET.
+    with app_module.app.app_context():
+        persisted = app_module.db.session.get(app_module.CurriculumAssignment, written_id)
+        assert persisted.content_json["questions"][0]["prompt"] == "Part 1: Custom First Trades"
 
     # Non-instructor is forbidden.
     forbidden_resp = client.patch(
