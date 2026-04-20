@@ -6840,6 +6840,56 @@ def admin_update_competition_open():
     return jsonify({'message': f'Competition {competition_code} open status updated to {is_open}.'})
 
 
+@app.route('/competition/update_dates', methods=['POST'])
+def update_competition_dates():
+    data = request.get_json() or {}
+    username = data.get('username')
+    competition_code = data.get('competition_code')
+    competition_id = data.get('competition_id')
+
+    if 'start_date' not in data and 'end_date' not in data:
+        return jsonify({'message': 'start_date and/or end_date is required.'}), 400
+
+    user = User.query.filter_by(username=username).first() if username else None
+    if not user:
+        return jsonify({'message': 'User not found'}), 404
+
+    comp = None
+    if competition_id is not None:
+        try:
+            comp = db.session.get(Competition, int(competition_id))
+        except (TypeError, ValueError):
+            return jsonify({'message': 'Invalid competition id'}), 400
+    if comp is None and competition_code:
+        comp = Competition.query.filter_by(code=str(competition_code).strip()).first()
+    if not comp:
+        return jsonify({'message': 'Competition not found'}), 404
+
+    if not _is_competition_instructor(user, comp):
+        return jsonify({'message': 'Only the competition organizer can update dates.'}), 403
+
+    try:
+        new_start = comp.start_date
+        new_end = comp.end_date
+        if 'start_date' in data:
+            new_start = _parse_iso_date(data.get('start_date'), 'start_date')
+        if 'end_date' in data:
+            new_end = _parse_iso_date(data.get('end_date'), 'end_date')
+    except ValueError as exc:
+        return jsonify({'message': str(exc)}), 400
+
+    if new_start and new_end and new_end < new_start:
+        return jsonify({'message': 'end_date cannot be before start_date.'}), 400
+
+    comp.start_date = new_start
+    comp.end_date = new_end
+    db.session.commit()
+
+    return jsonify({
+        'message': f'Competition {comp.code} dates updated successfully.',
+        'competition': _serialize_competition_identity(comp, requesting_user=user),
+    })
+
 
 # New endpoints for admin removal actions
 @app.route('/admin/remove_user_from_competition', methods=['POST'])
