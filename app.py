@@ -2724,18 +2724,27 @@ def _is_competition_instructor(user, competition):
 
 
 def _get_trade_participation_for_module(competition, module, user_id):
+    # Returns (trade_completed, trade_points, trade_count, first_trade_at). Zero
+    # qualifying trades must surface as points=0 with count=0 and first_trade_at=None
+    # so the grades response carries an explicit "not_submitted" signal instead of
+    # letting the frontend infer a default-full-credit state for the trading portion.
     if not competition or not module:
-        return False, 0
+        return False, 0, 0, None
     # Treat due_date as inclusive for the full calendar day.
     window_start = module.unlock_date
     window_end_exclusive = module.due_date + timedelta(days=1)
-    trade_exists = db.session.query(TradeBlotterEntry.id).filter(
+    trade_count, first_trade_at = db.session.query(
+        func.count(TradeBlotterEntry.id),
+        func.min(TradeBlotterEntry.created_at),
+    ).filter(
         TradeBlotterEntry.user_id == user_id,
         TradeBlotterEntry.account_context == f"competition:{competition.code}",
         TradeBlotterEntry.created_at >= window_start,
         TradeBlotterEntry.created_at < window_end_exclusive,
-    ).first() is not None
-    return trade_exists, (10 if trade_exists else 0)
+    ).one()
+    trade_count = int(trade_count or 0)
+    trade_completed = trade_count > 0
+    return trade_completed, (10 if trade_completed else 0), trade_count, first_trade_at
 
 
 def _build_module_grade_breakdown(competition, module, user_id, assignments, submission_by_assignment):
@@ -2756,10 +2765,11 @@ def _build_module_grade_breakdown(competition, module, user_id, assignments, sub
     assignment_total = round(float(assignment_eval["pointsEarned"]), 2) if assignment_eval else 0.0
     assignment_possible = round(float(assignment_eval["pointsPossible"]), 2) if assignment_eval else 0.0
 
-    trade_completed, trade_points = _get_trade_participation_for_module(competition, module, user_id)
+    trade_completed, trade_points, trade_count, first_trade_at = _get_trade_participation_for_module(competition, module, user_id)
     module_total = round(quiz_points + assignment_total + trade_points, 2)
     module_possible = round(quiz_possible + assignment_possible + 10.0, 2)
     module_percentage = round((module_total / module_possible * 100.0), 2) if module_possible else None
+    trade_grading_status = "graded" if trade_completed else "not_submitted"
     return {
         "moduleId": module.id,
         "moduleWeek": module.week_number,
@@ -2797,6 +2807,9 @@ def _build_module_grade_breakdown(competition, module, user_id, assignments, sub
             "pointsPossible": 10,
             "windowStart": module.unlock_date.isoformat(),
             "windowEnd": module.due_date.isoformat(),
+            "gradingStatus": trade_grading_status,
+            "tradeCount": trade_count,
+            "submittedAt": first_trade_at.isoformat() if first_trade_at else None,
         },
         "moduleTotalPoints": module_total,
         "modulePointsPossible": module_possible,
@@ -2986,7 +2999,7 @@ def _compute_grade_summary(competition_id, user_id):
 
         if _is_module_in_grade_scope(module):
             total_items += 1
-            trade_completed, _trade_points = _get_trade_participation_for_module(competition, module, user_id)
+            trade_completed, _trade_points, _trade_count, _first_trade_at = _get_trade_participation_for_module(competition, module, user_id)
             if trade_completed:
                 completed_items += 1
 
@@ -3225,7 +3238,7 @@ def _build_teacher_grade_rows(competition, curriculum, member_ids):
         for module in modules:
             if not _is_module_in_grade_scope(module):
                 continue
-            trade_completed, _trade_points = _get_trade_participation_for_module(competition, module, uid)
+            trade_completed, _trade_points, _trade_count, _first_trade_at = _get_trade_participation_for_module(competition, module, uid)
             if trade_completed:
                 trade_completed_items += 1
 
