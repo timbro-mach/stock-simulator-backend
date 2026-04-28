@@ -3552,6 +3552,71 @@ def send_reset_email(recipient_email, reset_url, expires_minutes):
     except requests.RequestException as exc:
         logger.exception("Microsoft Graph sendMail exception: %s", exc)
 
+def send_username_email(recipient_email, username):
+    tenant_id = os.getenv("MS_TENANT_ID")
+    client_id = os.getenv("MS_CLIENT_ID")
+    client_secret = os.getenv("MS_CLIENT_SECRET")
+    sender_email = os.getenv("MS_SENDER_EMAIL")
+
+    if not tenant_id or not client_id or not client_secret or not sender_email:
+        logger.warning("Microsoft Graph email not configured; missing tenant/client/sender settings.")
+        return
+
+    authority = f"https://login.microsoftonline.com/{tenant_id}"
+    graph_app = msal.ConfidentialClientApplication(
+        client_id=client_id,
+        client_credential=client_secret,
+        authority=authority
+    )
+    token_result = graph_app.acquire_token_for_client(
+        scopes=["https://graph.microsoft.com/.default"]
+    )
+    access_token = token_result.get("access_token")
+    if not access_token:
+        logger.warning("Microsoft Graph token acquisition failed. error=%s", token_result.get("error"))
+        return
+
+    html_body = (
+        "<p>Your Stock Simulator username</p>"
+        f"<p>Your username is: <strong>{username}</strong></p>"
+        "<p>If you didn’t request this, you can safely ignore this email.</p>"
+    )
+
+    payload = {
+        "message": {
+            "subject": "Your Stock Simulator username",
+            "body": {
+                "contentType": "HTML",
+                "content": html_body
+            },
+            "toRecipients": [
+                {"emailAddress": {"address": recipient_email}}
+            ]
+        },
+        "saveToSentItems": "false"
+    }
+
+    try:
+        response = requests.post(
+            f"https://graph.microsoft.com/v1.0/users/{sender_email}/sendMail",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json"
+            },
+            json=payload,
+            timeout=10
+        )
+        if 200 <= response.status_code < 300:
+            logger.info("Microsoft Graph sendMail (username) success status=%s", response.status_code)
+        else:
+            logger.warning(
+                "Microsoft Graph sendMail (username) failed status=%s response=%s",
+                response.status_code,
+                response.text
+            )
+    except requests.RequestException as exc:
+        logger.exception("Microsoft Graph sendMail (username) exception: %s", exc)
+
 def record_password_reset_request(email_hash, request_ip):
     entry = PasswordResetRequest(
         email_hash=email_hash,
@@ -4048,11 +4113,14 @@ def register():
     username = data.get('username')
     password = data.get('password')
     email = data.get('email')
-    if User.query.filter_by(username=username).first():
+    if username:
+        username = username.strip()
+    normalized_email = normalize_email(email)
+    if username and User.query.filter(func.lower(User.username) == username.lower()).first():
         return jsonify({'message': 'User already exists'}), 400
-    if User.query.filter_by(email=email).first():
+    if normalized_email and User.query.filter(func.lower(User.email) == normalized_email).first():
         return jsonify({'message': 'Email already in use'}), 400
-    new_user = User(username=username, email=email)
+    new_user = User(username=username, email=normalized_email)
     new_user.set_password(password)
     db.session.add(new_user)
     db.session.commit()
@@ -4061,9 +4129,26 @@ def register():
 @app.route('/login', methods=['POST'])
 def login():
     data = request.get_json()
-    username = data.get('username')
+    # Accept either 'username' or 'identifier'; the value may be a username or an email.
+    identifier = data.get('username') or data.get('identifier') or data.get('email')
     password = data.get('password')
-    user = User.query.filter_by(username=username).first()
+
+    user = None
+    if identifier:
+        identifier_stripped = identifier.strip()
+        identifier_lower = identifier_stripped.lower()
+
+        # 1) Exact-case username match (preserves prior behavior; handles existing
+        #    accounts that may differ only by case).
+        user = User.query.filter_by(username=identifier_stripped).first()
+
+        # 2) Case-insensitive username match.
+        if not user:
+            user = User.query.filter(func.lower(User.username) == identifier_lower).first()
+
+        # 3) Email match (case-insensitive). Useful when the user types their email.
+        if not user and '@' in identifier_stripped:
+            user = User.query.filter(func.lower(User.email) == identifier_lower).first()
 
     if user and user.check_password(password):
         # --- Competition Accounts ---
@@ -4302,6 +4387,51 @@ def reset_password():
     )
 
     return jsonify({'message': 'Password updated successfully.'}), 200
+
+
+@app.route('/api/auth/forgot-username', methods=['POST'])
+def forgot_username():
+    data = request.get_json() or {}
+    email = normalize_email(data.get('email'))
+    email_hash = hash_value(email) if email else hash_value("")
+    request_ip = (request.headers.get("X-Forwarded-For", request.remote_addr) or "").split(",")[0].strip()
+    user_agent = request.headers.get("User-Agent", "")
+
+    rate_limited = is_rate_limited(email_hash, request_ip)
+    record_password_reset_request(email_hash, request_ip)
+
+    generic_response = jsonify({'message': 'If an account exists for that email, we sent the username.'}), 200
+
+    if rate_limited:
+        logger.info(
+            "forgot_username_rate_limited email_hash=%s ip=%s user_agent=%s",
+            email_hash,
+            request_ip,
+            user_agent
+        )
+        return generic_response
+
+    user = User.query.filter(func.lower(User.email) == email).first() if email else None
+    if user:
+        app_base_url = os.getenv("APP_BASE_URL", "").rstrip("/")
+        send_username_email(user.email, user.username)
+        logger.info(
+            "forgot_username_sent user_id=%s email_hash=%s ip=%s user_agent=%s app_base_url_set=%s",
+            user.id,
+            email_hash,
+            request_ip,
+            user_agent,
+            bool(app_base_url)
+        )
+    else:
+        logger.info(
+            "forgot_username_not_found email_hash=%s ip=%s user_agent=%s",
+            email_hash,
+            request_ip,
+            user_agent
+        )
+
+    return generic_response
 
 
 # --------------------
