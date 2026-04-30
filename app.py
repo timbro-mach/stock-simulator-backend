@@ -395,6 +395,17 @@ def ensure_schema_compatibility():
                 if col_name in existing_cols:
                     continue
                 _safe_exec(f'ALTER TABLE curriculum_submission ADD COLUMN {col_name} {col_type}')
+        if 'user' in table_names:
+            # Legacy rows persisted before username/email were stripped on
+            # registration can have leading/trailing whitespace, which makes
+            # /login (and /forgot-* lookups) fail even with the right
+            # credentials. Trim once so existing accounts are recoverable.
+            # Lowercasing is intentionally NOT applied here to avoid colliding
+            # with the unique(email) constraint on case-only duplicates; the
+            # /login and /forgot-* queries handle case insensitively.
+            user_table = '"user"' if dialect == 'postgresql' else 'user'
+            _safe_exec(f"UPDATE {user_table} SET username = TRIM(username) WHERE username <> TRIM(username)")
+            _safe_exec(f"UPDATE {user_table} SET email = TRIM(email) WHERE email IS NOT NULL AND email <> TRIM(email)")
         if 'submission_question_grades' not in table_names:
             db.session.execute(text(
                 'CREATE TABLE submission_question_grades ('
@@ -4142,13 +4153,19 @@ def login():
         #    accounts that may differ only by case).
         user = User.query.filter_by(username=identifier_stripped).first()
 
-        # 2) Case-insensitive username match.
+        # 2) Case-insensitive username match. TRIM the stored value too so legacy
+        #    accounts persisted before usernames were stripped on registration
+        #    (e.g. "Gordon Montgomery ") still match.
         if not user:
-            user = User.query.filter(func.lower(User.username) == identifier_lower).first()
+            user = User.query.filter(
+                func.lower(func.trim(User.username)) == identifier_lower
+            ).first()
 
-        # 3) Email match (case-insensitive). Useful when the user types their email.
+        # 3) Email match (case-insensitive, trimmed on both sides).
         if not user and '@' in identifier_stripped:
-            user = User.query.filter(func.lower(User.email) == identifier_lower).first()
+            user = User.query.filter(
+                func.lower(func.trim(User.email)) == identifier_lower
+            ).first()
 
     if user and user.check_password(password):
         # --- Competition Accounts ---
@@ -4307,7 +4324,7 @@ def forgot_password():
         )
         return jsonify({'message': 'If an account exists for that email, we sent a reset link.'}), 200
 
-    user = User.query.filter(func.lower(User.email) == email).first() if email else None
+    user = User.query.filter(func.lower(func.trim(User.email)) == email).first() if email else None
     if user:
         logger.info("password_reset_user_lookup found user_id=%s", user.id)
         now = datetime.utcnow()
@@ -4411,7 +4428,7 @@ def forgot_username():
         )
         return generic_response
 
-    user = User.query.filter(func.lower(User.email) == email).first() if email else None
+    user = User.query.filter(func.lower(func.trim(User.email)) == email).first() if email else None
     if user:
         app_base_url = os.getenv("APP_BASE_URL", "").rstrip("/")
         send_username_email(user.email, user.username)
