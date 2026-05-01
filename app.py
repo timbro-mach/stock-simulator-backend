@@ -5,6 +5,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import func, inspect, text
 import requests, secrets
+import time
 from datetime import datetime, timedelta, timezone, date
 from dateutil import tz
 import logging
@@ -3653,7 +3654,7 @@ def is_rate_limited(email_hash, request_ip):
 # --------------------
 def get_current_price(symbol):
     url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={symbol}&entitlement=realtime&apikey={ALPHA_VANTAGE_API_KEY}"
-    response = requests.get(url)
+    response = requests.get(url, timeout=10)
     if response.status_code != 200:
         raise Exception(f"Alpha Vantage API error: {response.status_code}")
     data = response.json()
@@ -3663,6 +3664,23 @@ def get_current_price(symbol):
     if "05. price" not in global_quote:
         raise Exception(f"No price information available for symbol {symbol}")
     return float(global_quote["05. price"])
+
+
+# In-process TTL cache for leaderboard price lookups. Buy/sell and limit-order
+# execution intentionally call get_current_price() directly so trades always
+# settle against fresh prices; only display surfaces (leaderboards) use this.
+_LEADERBOARD_PRICE_CACHE_TTL_SECONDS = 60
+_leaderboard_price_cache = {}
+
+
+def get_cached_price(symbol):
+    now = time.time()
+    cached = _leaderboard_price_cache.get(symbol)
+    if cached and (now - cached[0]) < _LEADERBOARD_PRICE_CACHE_TTL_SECONDS:
+        return cached[1]
+    price = get_current_price(symbol)
+    _leaderboard_price_cache[symbol] = (now, price)
+    return price
 
 
 def get_current_and_prev_close(symbol):
@@ -7309,7 +7327,7 @@ def competition_leaderboard(code):
         choldings = CompetitionHolding.query.filter_by(competition_member_id=m.id).all()
         for h in choldings:
             try:
-                price = get_current_price(h.symbol)
+                price = get_cached_price(h.symbol)
             except Exception:
                 price = 0
             total_holdings += price * h.quantity
@@ -7346,7 +7364,7 @@ def competition_team_leaderboard(code):
         tholdings = CompetitionTeamHolding.query.filter_by(competition_team_id=ct.id).all()
         for h in tholdings:
             try:
-                price = get_current_price(h.symbol)
+                price = get_cached_price(h.symbol)
             except Exception:
                 price = 0
             total_holdings += price * h.quantity
