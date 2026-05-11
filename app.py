@@ -5189,18 +5189,20 @@ def _validate_written_assignment_content(content, idx):
         if not isinstance(prompt, str) or not prompt.strip():
             return None, f"updates[{idx}].content.questions[{q_idx}].prompt must be a non-empty string"
         sections = question.get("sections")
-        if not isinstance(sections, list) or not sections:
-            return None, f"updates[{idx}].content.questions[{q_idx}].sections must be a non-empty array"
+        if sections is None:
+            sections = []
+        if not isinstance(sections, list):
+            return None, f"updates[{idx}].content.questions[{q_idx}].sections must be an array"
         normalized_sections = []
         for s_idx, section in enumerate(sections):
             if not isinstance(section, dict):
                 return None, f"updates[{idx}].content.questions[{q_idx}].sections[{s_idx}] must be an object"
+            instruction = section.get("instruction")
+            if not isinstance(instruction, str) or not instruction.strip():
+                continue
             sid = section.get("id")
             if not isinstance(sid, str) or not sid.strip():
                 return None, f"updates[{idx}].content.questions[{q_idx}].sections[{s_idx}].id must be a non-empty string"
-            instruction = section.get("instruction")
-            if not isinstance(instruction, str) or not instruction.strip():
-                return None, f"updates[{idx}].content.questions[{q_idx}].sections[{s_idx}].instruction must be a non-empty string"
             normalized_sections.append({"id": sid.strip(), "instruction": instruction.strip()})
         canonical_prompt = _strip_inlined_sections_from_prompt(prompt.strip(), normalized_sections)
         if not canonical_prompt:
