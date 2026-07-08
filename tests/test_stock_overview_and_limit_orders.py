@@ -110,7 +110,7 @@ def test_today_metrics_invariant_across_ranges(app_client, monkeypatch):
 
 
 
-def test_today_metrics_use_global_quote_change_fields(app_client, monkeypatch):
+def test_today_metrics_derive_from_current_and_prev_close(app_client, monkeypatch):
     _, app_module = app_client
     monkeypatch.setattr(
         app_module.requests,
@@ -121,10 +121,10 @@ def test_today_metrics_use_global_quote_change_fields(app_client, monkeypatch):
     one_day = app_module.build_stock_overview("AAPL", "1D")
     one_year = app_module.build_stock_overview("AAPL", "1Y")
 
-    assert one_day["today_change_value"] == 7.5
-    assert one_day["today_change_percent"] == 6.1
-    assert one_year["today_change_value"] == 7.5
-    assert one_year["today_change_percent"] == 6.1
+    assert one_day["today_change_value"] == 23.0
+    assert one_day["today_change_percent"] == 23.0
+    assert one_year["today_change_value"] == 23.0
+    assert one_year["today_change_percent"] == 23.0
 
 
 
@@ -140,8 +140,25 @@ def test_one_day_range_uses_today_change_metrics(app_client, monkeypatch):
     payload = app_module.build_stock_overview("AAPL", "1D")
 
     assert payload["range_start_price"] == 100.0
-    assert payload["range_change_value"] == 7.5
-    assert payload["range_change_percent"] == 6.1
+    assert payload["range_change_value"] == 23.0
+    assert payload["range_change_percent"] == 23.0
+
+
+def test_one_day_ignores_quote_change_fields_when_derived_change_exists(app_client, monkeypatch):
+    _, app_module = app_client
+    monkeypatch.setattr(
+        app_module.requests,
+        "get",
+        make_fake_get(current_price=123.0, prev_close=100.0, quote_change=0, quote_change_percent="0.00%"),
+    )
+
+    payload = app_module.build_stock_overview("AAPL", "1D")
+
+    # current_price (123) and prev_close (100) define today's change canonically.
+    assert payload["today_change_value"] == 23.0
+    assert payload["today_change_percent"] == 23.0
+    assert payload["range_change_value"] == 23.0
+    assert payload["range_change_percent"] == 23.0
 
 
 def test_one_day_chart_points_include_only_today(app_client, monkeypatch):
